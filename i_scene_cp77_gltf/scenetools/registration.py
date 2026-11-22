@@ -7,7 +7,7 @@ from .application.lights import (
     lights_before_import,
     preview_imported_lights,
 )
-from .blender.images import RESOURCE_IMAGES
+from .blender.images import clear_resource_image_cache
 from .operators import SCENE_TOOL_OPERATOR_CLASSES
 from .runtime.callbacks import clear_loaded_file_caches
 from .runtime.lights import clear_light_index
@@ -60,5 +60,5 @@ def register_scenetools():
 
 def unregister_scenetools():
     clear_runtime_cache()
-    RESOURCE_IMAGES.clear()
+    clear_resource_image_cache()
     _LEDGER.cleanup_or_raise()

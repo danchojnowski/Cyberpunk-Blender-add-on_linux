@@ -1,9 +1,11 @@
+from bpy.app.translations import pgettext
+
 from ..blender import shader_nodes
 from ..materials.blender.nodes import create_node
 from .graph import mix_color_socket
 from .interior_parallax_common import atlas_depth, window_day_night_factors
 from .mat_common import param_color
-from .window_parallax_interior import WindowParallaxInterior, replicate_to_vector
+from .window_parallax_interior import WindowParallaxInterior, _replicate
 from .window_parallax_source import build_window_parallax_coordinates, color_overlay_uv
 
 
@@ -21,7 +23,7 @@ class WindowParallaxInteriorProxy(WindowParallaxInterior):
     def create(self, Data, Mat):
         data = Data if isinstance(Data, dict) else {}
         tree = Mat.node_tree
-        bsdf = shader_nodes.principled_bsdf(tree.nodes)
+        bsdf = tree.nodes[pgettext("Principled BSDF")]
         coords = build_window_parallax_coordinates(
             self,
             tree,
@@ -112,9 +114,7 @@ class WindowParallaxInteriorProxy(WindowParallaxInterior):
                 curtain_mix.outputs, "Result_Color"
             )
 
-        interp_rgb = replicate_to_vector(
-            tree, coords.room_interp, (20, 620), "roomInterp.xxx"
-        )
+        interp_rgb = _replicate(tree, coords.room_interp, (20, 620), "roomInterp.xxx")
         depth_color = mix_color_socket(
             tree.nodes,
             tree.links,

@@ -25,12 +25,7 @@ class PosePreviewOperator:
     def execute(self, context):
         tree, node = active_node(context, self.red_types)
         return execute_operation(
-            self,
-            "AnimGraph pose preview",
-            preview.evaluate_preview,
-            context,
-            tree,
-            node,
+            self, "AnimGraph pose preview", preview.evaluate_preview, tree, node
         )
 
 
@@ -48,7 +43,7 @@ class ClearPosePreviewOperator:
     def execute(self, context):
         tree, _node = active_node(context, self.red_types)
         return execute_operation(
-            self, "AnimGraph preview restore", preview.clear_preview, context, tree
+            self, "AnimGraph preview restore", preview.clear_preview, tree
         )
 
 
@@ -128,7 +123,6 @@ class REDENGINE_OT_animgraph_bind_active_armature(bpy.types.Operator):
             self,
             "AnimGraph armature binding",
             preview.bind_armature,
-            context,
             active_tree(context),
             context.active_object,
         )
@@ -148,7 +142,6 @@ class REDENGINE_OT_animgraph_clear_armature_binding(bpy.types.Operator):
             self,
             "AnimGraph armature binding",
             preview.bind_armature,
-            context,
             active_tree(context),
             None,
         )

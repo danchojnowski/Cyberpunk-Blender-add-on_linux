@@ -8,7 +8,7 @@ from bpy.props import (
 )
 from bpy.types import Operator
 
-from ...blender.operator_results import execute_operation, finish_operator
+from ...blender.operator_results import execute_operation
 from ...blender.transactions import (
     DatablockImportTransaction,
     rollback_report_message,
@@ -18,11 +18,13 @@ from ...core.notifications import (
     import_operation,
     report,
 )
+from ...importers.mesh.orchestration import MaterialReloadError, reload_materials
 from ...materials.blender import multilayer as multilayer_service
 from ..application.execution import (
     create_material_from_template,
+    load_depot_microblends,
     load_multilayer_template,
-    scan_material_depot,
+    scan_multilayer_templates,
 )
 from ..application.options import (
     MATERIAL_TEMPLATE_COOKED_EXTENSION,
@@ -52,7 +54,6 @@ from ..workflows.creation import (
     create_multilayer_object,
     relocate_mesh_material,
 )
-from ..workflows.reload import MaterialReloadError, reload_materials
 
 _LOG = get_logger(__name__)
 
@@ -81,18 +82,24 @@ def _rollback_operator_transaction(owner, transaction, message):
 def _run_override_generation(owner, callback):
     transaction = DatablockImportTransaction()
     try:
-        with (
-            transaction.scope(),
-            multilayer_service.override_palette_batch_scope(owner),
-        ):
+        with transaction.scope():
             result = callback()
-        if not result.ok:
-            finish_operator(owner, result)
+        if not isinstance(result, set):
+            report(
+                owner,
+                "ERROR",
+                "Override generation returned an invalid operator status.",
+                logger=_LOG,
+            )
+            return _rollback_operator_transaction(
+                owner, transaction, "Override generation failed"
+            )
+        if "FINISHED" not in result:
             return _rollback_operator_transaction(
                 owner, transaction, "Override generation was cancelled"
             )
         transaction.commit()
-        return finish_operator(owner, result)
+        return result
     except Exception as error:
         report(
             owner,
@@ -161,9 +168,7 @@ class CP77MlSetupGenerateOverrides(Operator):
     def execute(self, context):
         result = _run_override_generation(
             self,
-            lambda: multilayer_service.generate_override_palettes(
-                getattr(context, "selected_objects", ())
-            ),
+            lambda: multilayer_service.cp77_mlsetup_generateoverrides(self, context),
         )
         clear_palette_caches()
         synchronize_panel(context)
@@ -182,8 +187,11 @@ class CP77MlSetupGenerateOverridesDisconnected(Operator):
     def execute(self, context):
         result = _run_override_generation(
             self,
-            lambda: multilayer_service.generate_override_palettes(
-                (context.active_object,), include_disconnected=True
+            lambda: multilayer_service.cp77_mlsetup_generateoverrides(
+                self,
+                context,
+                objs=(context.active_object,),
+                include_disconnected=True,
             ),
         )
         clear_palette_caches()
@@ -367,16 +375,7 @@ class CP77MlSetupRelocateMesh(Operator):
         return {"RUNNING_MODAL"}
 
 
-class _DepotFileBrowser:
-    def invoke(self, context, _event):
-        depot_root = ensure_material_depot_path(context)
-        if depot_root and os.path.isdir(depot_root):
-            self.filepath = os.path.join(depot_root, "")
-        context.window_manager.fileselect_add(self)
-        return {"RUNNING_MODAL"}
-
-
-class CP77_OT_LoadMaterialTemplate(_DepotFileBrowser, Operator):
+class CP77_OT_LoadMaterialTemplate(Operator):
     bl_idname = "cp77.load_material_template"
     bl_label = "Load Material Template"
     bl_description = "Create a Blender material from an exported Cyberpunk .mt template"
@@ -387,6 +386,13 @@ class CP77_OT_LoadMaterialTemplate(_DepotFileBrowser, Operator):
         default=f"*{MATERIAL_TEMPLATE_EXTENSION};*{MATERIAL_TEMPLATE_COOKED_EXTENSION}",
         options={"HIDDEN"},
     )
+
+    def invoke(self, context, _event):
+        depot_root = ensure_material_depot_path(context)
+        if depot_root and os.path.isdir(depot_root):
+            self.filepath = os.path.join(depot_root, "")
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
 
     @import_operation
     def execute(self, context):
@@ -417,7 +423,62 @@ class CP77_OT_LoadMaterialTemplate(_DepotFileBrowser, Operator):
             return {"CANCELLED"}
 
 
-class CP77_OT_LoadMultilayerTemplate(_DepotFileBrowser, Operator):
+class CP77_OT_LoadDepotMicroblends(Operator):
+    bl_idname = "cp77.load_depot_microblends"
+    bl_label = "Load Depot Microblends"
+    bl_description = "Scan the Material Tools depot and load every image whose path contains microblend"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @import_operation
+    def execute(self, context):
+        props = context.scene.cp77_ml_props
+        root = ensure_material_depot_path(context, props)
+        if not os.path.isdir(root):
+            report(
+                self,
+                "ERROR",
+                "Select a valid material depot folder in Material Tools.",
+                logger=_LOG,
+            )
+            return {"CANCELLED"}
+        try:
+            result = load_depot_microblends(root)
+        except Exception as error:
+            report(self, "ERROR", str(error), logger=_LOG, error=error)
+            return {"CANCELLED"}
+        if not result.succeeded and not result.failures:
+            report(
+                self,
+                "WARNING",
+                "No microblend images were found in the depot",
+                logger=_LOG,
+            )
+            return {"CANCELLED"}
+
+        failure_text = f"; {len(result.failures)} failed" if result.failures else ""
+        collision_text = (
+            f"; {result.collision_count} path collision(s)"
+            if result.collision_count
+            else ""
+        )
+        message = (
+            f"Loaded {result.loaded_count} microblend image(s); "
+            f"{result.existing_count} already present{failure_text}{collision_text}"
+        )
+        if result.failures:
+            _LOG.warning(
+                "Microblend image scan: %d failure(s); first: %s",
+                len(result.failures),
+                "; ".join(result.failures[:3]),
+            )
+            _LOG.debug(
+                "Microblend image scan failures:\n  %s", "\n  ".join(result.failures)
+            )
+        report(self, {"WARNING"} if result.failures else {"INFO"}, message, logger=_LOG)
+        return {"FINISHED"} if result.succeeded else {"CANCELLED"}
+
+
+class CP77_OT_LoadMultilayerTemplate(Operator):
     bl_idname = "cp77.load_multilayer_template"
     bl_label = "Add Multilayer Template"
     bl_description = (
@@ -429,6 +490,13 @@ class CP77_OT_LoadMultilayerTemplate(_DepotFileBrowser, Operator):
     filter_glob: StringProperty(
         default=f"*{MULTILAYER_TEMPLATE_EXTENSION}", options={"HIDDEN"}
     )
+
+    def invoke(self, context, _event):
+        root = ensure_material_depot_path(context)
+        if root and os.path.isdir(root):
+            self.filepath = os.path.join(root, "")
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
 
     @import_operation
     def execute(self, context):
@@ -477,7 +545,7 @@ class CP77_OT_ApplyMultilayerTemplate(Operator):
 class CP77_OT_ScanMaterialDepot(Operator):
     bl_idname = "cp77.scan_material_depot"
     bl_label = "Scan Multilayer Template Depot"
-    bl_options = {"REGISTER", "UNDO"}
+    bl_options = {"REGISTER"}
 
     def execute(self, context):
         props = context.scene.cp77_ml_props
@@ -491,7 +559,7 @@ class CP77_OT_ScanMaterialDepot(Operator):
             )
             return {"CANCELLED"}
         try:
-            result = scan_material_depot(root)
+            result = scan_multilayer_templates(root)
         except Exception as error:
             report(self, "ERROR", str(error), logger=_LOG, error=error)
             return {"CANCELLED"}
@@ -511,19 +579,18 @@ class CP77_OT_ScanMaterialDepot(Operator):
         )
         failure_text = f"; {len(result.failures)} failed" if result.failures else ""
         message = (
-            f"Loaded {result.template_count} MLTEMPLATE files and "
-            f"{result.microblend_loaded_count} microblend image(s); "
-            f"{result.microblend_existing_count} already present"
+            f"Found {result.setup_count} MLSETUP files; "
+            f"loaded {result.loaded_count} MLTEMPLATE files"
             f"{failure_text}{collision_text}"
         )
         if result.failures:
             _LOG.warning(
-                "Material depot scan: %d failure(s); first: %s",
+                "Multilayer template scan: %d failure(s); first: %s",
                 len(result.failures),
                 "; ".join(result.failures[:3]),
             )
             _LOG.debug(
-                "Material depot scan failures:\n  %s", "\n  ".join(result.failures)
+                "Multilayer template scan failures:\n  %s", "\n  ".join(result.failures)
             )
         report(self, "WARNING" if result.failures else "INFO", message, logger=_LOG)
         return {"FINISHED"} if result.succeeded else {"CANCELLED"}
@@ -605,6 +672,7 @@ MATERIAL_OPERATOR_CLASSES = (
     CP77MlSetupCreateMultilayerMaterial,
     CP77MlSetupRelocateMesh,
     CP77_OT_LoadMaterialTemplate,
+    CP77_OT_LoadDepotMicroblends,
     CP77_OT_LoadMultilayerTemplate,
     CP77_OT_ApplyMultilayerTemplate,
     CP77_OT_ScanMaterialDepot,

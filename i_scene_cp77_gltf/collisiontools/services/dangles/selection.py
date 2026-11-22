@@ -6,15 +6,29 @@ from ....blender.armature_bones import (
     resolve_bone_name,
     resolve_pose_bone,
 )
-from ....blender.context import tag_view3d_redraw, with_context
-from ....blender.identity import rna_identity
-from ....core.log import get_logger
+from ....blender.context import tag_view3d_redraw
+from ....core.log import get_logger, log_once
 
 _LOG = get_logger(__name__)
 
 SYNC_LOCK = False
 _LAST_ACTIVE = (None, None)
 _POLL_INTERVAL = 0.15
+
+
+def _rig_key(rig):
+    try:
+        return int(rig.as_pointer())
+    except (AttributeError, ReferenceError) as error:
+        log_once(
+            _LOG,
+            "DEBUG",
+            ("_rig_key", type(error).__name__),
+            "rig key: fell back after %s",
+            error,
+            exc_info=True,
+        )
+        return None
 
 
 def _find_particle_for_bone(rig, state, bone_name):
@@ -41,42 +55,25 @@ def _select_single_pose_bone(rig, bone_name):
     tag_view3d_redraw()
 
 
-def _posed_dangle_rig(obj):
-    return (
-        obj is not None
-        and obj.type == "ARMATURE"
-        and obj.mode == "POSE"
-        and obj.dangle_state.is_dangle_rig
-    )
-
-
-def ensure_polling(context):
-    if _posed_dangle_rig(getattr(context, "active_object", None)):
-        if not bpy.app.timers.is_registered(SELECTION_POLL):
-            bpy.app.timers.register(SELECTION_POLL, first_interval=_POLL_INTERVAL)
-
-
-def stop_polling():
-    if bpy.app.timers.is_registered(SELECTION_POLL):
-        bpy.app.timers.unregister(SELECTION_POLL)
-
-
-def poll_selection(context):
+def _poll_selection():
     global SYNC_LOCK, _LAST_ACTIVE
     if SYNC_LOCK:
         return _POLL_INTERVAL
 
-    obj = getattr(context, "active_object", None)
-    if not _posed_dangle_rig(obj):
+    ctx = bpy.context
+    obj = getattr(ctx, "active_object", None)
+    if obj is None or obj.type != "ARMATURE" or obj.mode != "POSE":
         _LAST_ACTIVE = (None, None)
-        return None
-
-    active_pb = getattr(context, "active_pose_bone", None)
-    if active_pb is None or active_pb.id_data is not obj:
-        _LAST_ACTIVE = (rna_identity(obj), None)
+        return _POLL_INTERVAL
+    if not obj.dangle_state.is_dangle_rig:
         return _POLL_INTERVAL
 
-    key = (rna_identity(obj), active_pb.name)
+    active_pb = getattr(ctx, "active_pose_bone", None)
+    if active_pb is None or active_pb.id_data is not obj:
+        _LAST_ACTIVE = (_rig_key(obj), None)
+        return _POLL_INTERVAL
+
+    key = (_rig_key(obj), active_pb.name)
     if key == _LAST_ACTIVE:
         return _POLL_INTERVAL
     _LAST_ACTIVE = key
@@ -100,9 +97,6 @@ def poll_selection(context):
     finally:
         SYNC_LOCK = False
     return _POLL_INTERVAL
-
-
-SELECTION_POLL = with_context(poll_selection)
 
 
 def on_active_chain_update(self, context):
@@ -137,13 +131,34 @@ def on_active_particle_update(self, context):
     SYNC_LOCK = True
     try:
         _select_single_pose_bone(rig, target_name)
-        _LAST_ACTIVE = (rna_identity(rig), target_name)
+        _LAST_ACTIVE = (_rig_key(rig), target_name)
     finally:
         SYNC_LOCK = False
 
 
 @persistent
-def reset_selection_state(_unused=None):
+def _reset_selection_state_before_load(_unused=None):
     global SYNC_LOCK, _LAST_ACTIVE
     SYNC_LOCK = False
     _LAST_ACTIVE = (None, None)
+
+
+def register():
+    handlers = bpy.app.handlers.load_pre
+    while _reset_selection_state_before_load in handlers:
+        handlers.remove(_reset_selection_state_before_load)
+    handlers.append(_reset_selection_state_before_load)
+    _reset_selection_state_before_load()
+    if not bpy.app.timers.is_registered(_poll_selection):
+        bpy.app.timers.register(
+            _poll_selection, first_interval=_POLL_INTERVAL, persistent=True
+        )
+
+
+def unregister():
+    if bpy.app.timers.is_registered(_poll_selection):
+        bpy.app.timers.unregister(_poll_selection)
+    handlers = bpy.app.handlers.load_pre
+    while _reset_selection_state_before_load in handlers:
+        handlers.remove(_reset_selection_state_before_load)
+    _reset_selection_state_before_load()

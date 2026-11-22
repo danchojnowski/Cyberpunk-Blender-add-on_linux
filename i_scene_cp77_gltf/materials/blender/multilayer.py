@@ -13,71 +13,13 @@ import bpy
 from ...assetio.paths import depot_path_key
 from ...assetio.resolver import full_suffix, resolve_rooted_path
 from ...assetio.values import coerce_float
-from ...blender.operator_results import OperationResult
 from ...blender.transactions import new_tracked_datablock, track_mutation
-from ...core.log import debug_exception, get_logger
+from ...core.log import get_logger
 from ...core.notifications import report
 from ..resources import load_material_document
 from .nodes import createOverrideTable
 
 _LOG = get_logger(__name__)
-
-_ALT_SORT_TEMPLATES = frozenset(
-    {
-        "annodised",
-        "cliff_",
-        "dust_",
-        "dirt_",
-        "ebony_",
-        "factory_floor_old",
-        "factory_floor_rough",
-        "factory_floor_cracked",
-        "grass_",
-        "gravel",
-        "grime_",
-        "mirror",
-        "mud_",
-        "patina",
-        "pebbles",
-        "plaster_exterior_01_300",
-        "plaster_exterior_damp_01_300",
-        "plaster_exterior_neutral_01_300",
-        "plaster_exterior_damp_neutral_01_300",
-        "plaster_exterior_patched_neutral_01_300",
-        "plaster_exterior_rough_neutral_01_300_copy",
-        "rock_",
-        "sand_",
-        "soil_",
-        "trash_",
-        "terrain",
-        "water",
-        "windows",
-    }
-)
-_STEEL_SORT_TEMPLATES = frozenset(
-    {
-        "steel_dented_01_100",
-        "steel_dented_coroded_01_100",
-        "steel_dented_rusty_01_100",
-        "steel_galvanized_corrugated_01_300",
-        "steel_galvanized_corrugated_02_300",
-        "steel_galvanized_corrugated_rust_01_300",
-        "steel_galvanized_corrugated_rust_02_300",
-        "iron_old",
-    }
-)
-_COLOR_BLOCK_OFFSETS = {
-    "alt": {0: 0, 1: 0, 2: 2, 3: 1, 4: 2},
-    "concrete": {0: 0, 1: 0, 2: 2, 3: 1, 4: 2},
-    "steel": {0: 0, 1: 1, 2: 1, 3: 0, 4: 2},
-    "asphalt_paint": {0: 0, 1: 1, 2: 0, 3: 2},
-    "default": {
-        5: {0: 0, 1: 1, 2: 1, 3: 1},
-        6: {0: 0, 1: 1, 2: 2, 3: 2, 4: 4},
-        8: {0: 0, 1: 1, 2: 2, 3: 3, 4: 3, 5: 2, 6: 4},
-        9: {0: 0, 1: 1, 2: 1, 3: 1, 4: 0, 5: 0, 6: 3, 7: 0},
-    },
-}
 
 _PALETTE_PROPERTY_KEYS = (
     "MLTemplatePath",
@@ -108,7 +50,7 @@ _OVERRIDE_PALETTE_STATS = {
 }
 
 
-def load_rooted_json(reference, project_path, depot_path):
+def _load_rooted_json(reference, project_path, depot_path):
     extension = full_suffix(reference)
     resolved = resolve_rooted_path(
         reference,
@@ -128,6 +70,7 @@ def cp77_step_sort(r, g, b, repetitions=1):
         h2 = -1
     else:
         h2 = int(h * repetitions)
+    lum2 = int(lum * repetitions)
     v2 = int(v * repetitions)
     if h2 % 2 == 1:
         v2 = repetitions - v2
@@ -228,10 +171,62 @@ def _sorted_override_colors(template_name, override_table):
     if not ordered:
         ordered = list(color_table.values())
 
+    alt_sort_substrings = {
+        "annodised",
+        "cliff_",
+        "dust_",
+        "dirt_",
+        "ebony_",
+        "factory_floor_old",
+        "factory_floor_rough",
+        "factory_floor_cracked",
+        "grass_",
+        "gravel",
+        "grime_",
+        "mirror",
+        "mud_",
+        "patina",
+        "pebbles",
+        "plaster_exterior_01_300",
+        "plaster_exterior_damp_01_300",
+        "plaster_exterior_neutral_01_300",
+        "plaster_exterior_damp_neutral_01_300",
+        "plaster_exterior_patched_neutral_01_300",
+        "plaster_exterior_rough_neutral_01_300_copy",
+        "rock_",
+        "sand_",
+        "soil_",
+        "trash_",
+        "terrain",
+        "water",
+        "windows",
+    }
+    steel_sort_substrings = {
+        "steel_dented_01_100",
+        "steel_dented_coroded_01_100",
+        "steel_dented_rusty_01_100",
+        "steel_galvanized_corrugated_01_300",
+        "steel_galvanized_corrugated_02_300",
+        "steel_galvanized_corrugated_rust_01_300",
+        "steel_galvanized_corrugated_rust_02_300",
+        "iron_old",
+    }
+    offset_maps = {
+        "alt": {0: 0, 1: 0, 2: 2, 3: 1, 4: 2},
+        "concrete": {0: 0, 1: 0, 2: 2, 3: 1, 4: 2},
+        "steel": {0: 0, 1: 1, 2: 1, 3: 0, 4: 2},
+        "asphalt_paint": {0: 0, 1: 1, 2: 0, 3: 2},
+        "default": {
+            5: {0: 0, 1: 1, 2: 1, 3: 1},
+            6: {0: 0, 1: 1, 2: 2, 3: 2, 4: 4},
+            8: {0: 0, 1: 1, 2: 2, 3: 3, 4: 3, 5: 2, 6: 4},
+            9: {0: 0, 1: 1, 2: 1, 3: 1, 4: 0, 5: 0, 6: 3, 7: 0},
+        },
+    }
     lower_name = template_name.lower()
-    if any(token in lower_name for token in _ALT_SORT_TEMPLATES):
+    if any(token in lower_name for token in alt_sort_substrings):
         category = "alt"
-    elif any(token in lower_name for token in _STEEL_SORT_TEMPLATES):
+    elif any(token in lower_name for token in steel_sort_substrings):
         category = "steel"
     elif "asphalt_paint_01_300" in lower_name:
         category = "asphalt_paint"
@@ -248,11 +243,9 @@ def _sorted_override_colors(template_name, override_table):
     for color in ordered:
         block_position = block_number * block_len
         if category:
-            offset = _COLOR_BLOCK_OFFSETS[category].get(block_index, 0)
+            offset = offset_maps[category].get(block_index, 0)
         else:
-            offset = (
-                _COLOR_BLOCK_OFFSETS["default"].get(block_len, {}).get(block_index, 0)
-            )
+            offset = offset_maps["default"].get(block_len, {}).get(block_index, 0)
         insert_at = min(len(result), block_position + offset)
         result.insert(insert_at, color)
         block_index += 1
@@ -298,6 +291,23 @@ def _restore_palette(palette, snapshot):
         restored.append(color)
     if 0 <= active_index < len(restored):
         palette.colors.active = restored[active_index]
+
+
+def _palette_matches_snapshot(palette, snapshot):
+    properties, colors, _active_index = snapshot
+    for key in _PALETTE_PROPERTY_KEYS:
+        if key in properties:
+            if key not in palette or palette[key] != properties[key]:
+                return False
+        elif key in palette:
+            return False
+    current = []
+    for color in tuple(getattr(palette, "colors", ())):
+        try:
+            current.append(tuple(float(value) for value in color.color[:3]))
+        except (ReferenceError, ValueError):
+            return False
+    return tuple(current) == colors
 
 
 def _palette_data(template_path, override_table):
@@ -366,7 +376,7 @@ def _palette_signature(properties, colors):
     return tuple(signature_properties), tuple(colors)
 
 
-def _palette_matches(palette, properties, colors):
+def _palette_matches_data(palette, properties, colors):
     for key in _PALETTE_PROPERTY_KEYS:
         try:
             if key in properties:
@@ -403,7 +413,7 @@ def _create_palette_from_data(template_path, properties, colors):
         palette = new_tracked_datablock("palettes", palette_name)
         snapshot = None
     else:
-        if _palette_matches(palette, properties, colors):
+        if _palette_matches_data(palette, properties, colors):
             _OVERRIDE_PALETTE_STATS["unchanged"] += 1
             _PALETTE_INDEX[normalized] = palette
             return palette
@@ -413,8 +423,8 @@ def _create_palette_from_data(template_path, properties, colors):
             lambda palette=palette, snapshot=snapshot: _restore_palette(
                 palette, snapshot
             ),
-            verify=lambda palette=palette, snapshot=snapshot: _palette_matches(
-                palette, snapshot[0], snapshot[1]
+            verify=lambda palette=palette, snapshot=snapshot: _palette_matches_snapshot(
+                palette, snapshot
             ),
             label=f"multilayer palette {palette.name}",
         )
@@ -636,7 +646,6 @@ def layer_nodes(nodes, root, layer_count, include_disconnected):
 # A layer above the base with zero opacity adds nothing to the surface. Blender 5.3 leaves such layers out when it
 # compiles a material; earlier versions evaluate every layer, so there the link of each hidden layer into the multilayer
 # surface is muted. A muted link stays in the tree, so the panel and the exporters still find the layer through it.
-MAX_LAYERS = 20
 _MUTES_HIDDEN_LAYERS = bpy.app.version < (5, 3, 0)
 
 
@@ -667,7 +676,7 @@ def sync_hidden_layer_links(node_tree, root):
             link.is_muted = muted
 
 
-def role_node(nodes, role, fallback=None):
+def _role_node(nodes, role, fallback=None):
     if nodes is None:
         return None
     for node in nodes:
@@ -679,15 +688,15 @@ def role_node(nodes, role, fallback=None):
     return nodes.get(fallback) if fallback else None
 
 
-def layer_template_path(layer):
+def _layer_template_path(layer):
     layer_tree = getattr(layer, "node_tree", None)
     if layer_tree is None:
         return ""
-    base = role_node(getattr(layer_tree, "nodes", None), "base_material", "Group")
+    base = _role_node(getattr(layer_tree, "nodes", None), "base_material", "Group")
     template_tree = getattr(base, "node_tree", None) if base is not None else None
     if template_tree is None:
         return str(layer.get("cp77_ml_template", ""))
-    group_input = role_node(
+    group_input = _role_node(
         getattr(template_tree, "nodes", None), "group_input", "Group Input"
     )
     if group_input is not None:
@@ -697,16 +706,17 @@ def layer_template_path(layer):
     return str(template_tree.get("cp77_ml_template", layer.get("cp77_ml_template", "")))
 
 
-def generate_override_palettes(objects, *, include_disconnected=False):
-    objects = tuple(objects or ())
+def cp77_mlsetup_generateoverrides(
+    self, context, objs=None, include_disconnected=False
+):
+    objects = tuple(objs or getattr(context, "selected_objects", ()) or ())
     if not objects:
-        return OperationResult.cancelled(
-            "No objects selected for override rebuild.", "WARNING"
+        report(
+            self, "WARNING", "No objects selected for override rebuild.", logger=_LOG
         )
-    warnings = []
-    rebuilt = []
-    layers = 0
-    with override_palette_batch_scope():
+        return {"CANCELLED"}
+    generated = 0
+    with override_palette_batch_scope(self):
         for obj in objects:
             material = getattr(obj, "active_material", None)
             node_tree = (
@@ -716,7 +726,12 @@ def generate_override_palettes(objects, *, include_disconnected=False):
                 continue
             root = multilayer_root(node_tree.nodes)
             if root is None:
-                warnings.append(f"Multilayer root node not found on {material.name}.")
+                report(
+                    self,
+                    "WARNING",
+                    f"Multilayer root node not found on {material.name}.",
+                    logger=_LOG,
+                )
                 continue
             project_path = material.get("cp77_project_path")
             depot_path = material.get("DepotPath")
@@ -724,15 +739,20 @@ def generate_override_palettes(objects, *, include_disconnected=False):
             for index, layer in layer_nodes(
                 node_tree.nodes,
                 root,
-                MAX_LAYERS,
+                20,
                 include_disconnected,
             ):
-                template_path = layer_template_path(layer)
+                template_path = _layer_template_path(layer)
                 if not template_path:
-                    warnings.append(f"Layer {index + 1} has no MLTemplate metadata.")
+                    report(
+                        self,
+                        "WARNING",
+                        f"Layer {index + 1} has no MLTemplate metadata.",
+                        logger=_LOG,
+                    )
                     continue
                 try:
-                    template_json = load_rooted_json(
+                    template_json = _load_rooted_json(
                         template_path + ".json",
                         project_path,
                         depot_path,
@@ -742,21 +762,21 @@ def generate_override_palettes(objects, *, include_disconnected=False):
                     )
                     queue_override_palette(template_path, override_table)
                 except (FileNotFoundError, KeyError, TypeError, ValueError) as error:
-                    debug_exception(
-                        _LOG, "Layer %d template could not be loaded", index + 1
-                    )
-                    warnings.append(
-                        f"Layer {index + 1} template could not be loaded: {error}"
+                    report(
+                        self,
+                        "WARNING",
+                        f"Layer {index + 1} template could not be loaded: {error}",
+                        logger=_LOG,
+                        error=error,
                     )
                     continue
                 object_generated += 1
             if object_generated:
-                layers += object_generated
-                rebuilt.append(
-                    f"Rebuilt override palettes for {material.name} on {obj.name} ({object_generated} layers)."
+                generated += object_generated
+                report(
+                    self,
+                    "INFO",
+                    f"Rebuilt override palettes for {material.name} on {obj.name} ({object_generated} layers).",
+                    logger=_LOG,
                 )
-    if not layers:
-        return OperationResult(
-            False, "No override palettes were rebuilt.", "WARNING", tuple(warnings)
-        )
-    return OperationResult.finished(" ".join(rebuilt), warnings=warnings, layers=layers)
+    return {"FINISHED"} if generated else {"CANCELLED"}

@@ -30,10 +30,7 @@ def start(context, *, label: str = "animation") -> OperationResult:
                 result = bpy.ops.screen.animation_play()
     except (RuntimeError, TypeError, ValueError) as exc:
         return OperationResult(
-            False,
-            f"Could not start playback for {label}: {exc}",
-            "ERROR",
-            error=exc,
+            False, f"Could not start playback for {label}: {exc}", "ERROR"
         )
 
     if "FINISHED" not in result and not (
@@ -59,10 +56,7 @@ def stop(context) -> OperationResult:
             if not screen.is_animation_playing:
                 continue
             return OperationResult(
-                False,
-                f"Could not stop the current animation playback: {exc}",
-                "ERROR",
-                error=exc,
+                False, f"Could not stop the current animation playback: {exc}", "ERROR"
             )
 
         if "FINISHED" not in result and screen.is_animation_playing:

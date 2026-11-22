@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 
 import bpy.utils.previews
@@ -13,8 +14,8 @@ from bpy.types import Operator, PropertyGroup, TOPBAR_MT_file_export, UIList
 from bpy_extras.io_utils import ExportHelper
 
 from ..animation.domain.clip.root_motion import ROOT_MOTION_EXPORT_ITEMS
-from ..assetio.paths import safe_file_stem
-from ..blender.mesh_validation import DEFAULT_CHECKS, MeshValidationOptions
+from ..blender.gltf_exclusions import collect_excluded_objects
+from ..blender.mesh_validation import MeshValidationOptions
 from ..blender.operator_results import execute_operation
 from ..core.log import get_logger, log_once
 from ..core.notifications import report
@@ -29,12 +30,11 @@ from .materials.instance import cp77_materialinstance_export
 from .materials.multilayer_mask import cp77_mlmask_export
 from .materials.multilayer_setup import cp77_mlsetup_export
 from .materials.project_paths import default_project_output, replace_depot_suffix
-from .mesh.options import GlbExportOptions
 from .mesh.orchestration import export_cyberpunk_collections_glb, export_cyberpunk_glb
+from .mesh.scope import resolve_mesh_export_scope
 from .mesh.writer import mesh_glb_path
 from .rig.writer import export_active_rig
 from .sector.execution import export_project_sectors
-from .services.scope import export_results_message, export_scope
 
 _LOG = get_logger(__name__)
 
@@ -74,72 +74,60 @@ def _active_material(operator, context):
     return active_material
 
 
-_EXPORT_CHECKS = (
-    "check_unweighted_vertices",
-    "check_unused_bones",
-    "check_unused_vertex_groups",
-    "check_missing_uv",
-    "check_degenerate_faces",
-    "check_degenerate_uvs",
-)
-_SKINNED_CHECKS = frozenset({"check_unweighted_vertices", "check_unused_bones"})
-
-
 def _mesh_validation_options(operator):
     return MeshValidationOptions(
+        advanced_validation=operator.advanced_validation,
+        check_missing_uv=operator.check_missing_uv,
+        check_degenerate_faces=operator.check_degenerate_faces,
+        check_degenerate_uvs=operator.check_degenerate_uvs,
+        check_unweighted_vertices=operator.check_unweighted_vertices,
+        check_unused_bones=operator.check_unused_bones,
         try_fix=operator.try_fix,
-        **{name: getattr(operator, name) for name in _EXPORT_CHECKS},
+        fix_remove_unmatched_vertex_groups=operator.fix_remove_unmatched_vertex_groups,
+        fix_apply_autofitter_shape_keys=operator.fix_apply_autofitter_shape_keys,
+        fix_add_missing_uv=operator.fix_add_missing_uv,
+        fix_dissolve_degenerate_faces=operator.fix_dissolve_degenerate_faces,
+        fix_dissolve_degenerate_uvs=operator.fix_dissolve_degenerate_uvs,
+        fix_assign_unweighted_vertices=operator.fix_assign_unweighted_vertices,
+        fix_remove_unused_bones=operator.fix_remove_unused_bones,
+        fix_limit_influences=operator.fix_limit_influences,
     )
 
 
 def _draw_mesh_validation_options(layout, operator):
     validation_box = layout.box()
     validation_box.label(text="Mesh Validation")
-    # One list: what a check finds, Try Fix repairs, along with what export always needs.
-    checks = validation_box.column(align=True)
-    for name in _EXPORT_CHECKS:
-        if operator.is_skinned or name not in _SKINNED_CHECKS:
-            checks.prop(operator, name)
+    validation_box.prop(operator, "advanced_validation")
+    if operator.advanced_validation:
+        checks = validation_box.column(align=True)
+        checks.prop(operator, "check_missing_uv")
+        checks.prop(operator, "check_degenerate_faces")
+        checks.prop(operator, "check_degenerate_uvs")
+        if operator.is_skinned:
+            checks.prop(operator, "check_unweighted_vertices")
+            checks.prop(operator, "check_unused_bones")
+
     validation_box.prop(operator, "try_fix")
+    if not operator.try_fix:
+        return
 
-
-class ExportValidationProperties:
-    try_fix: BoolProperty(
-        name="Try Fix",
-        default=False,
-        description="Fix every problem the checks find on temporary export copies, and name the submeshes in Blender as "
-        "the export names them",
-    )
-    check_unweighted_vertices: BoolProperty(
-        name="Ungrouped Vertices",
-        default=DEFAULT_CHECKS["check_unweighted_vertices"],
-        description="Find vertices without weights; Try Fix gives them their nearest weighted vertex's weights",
-    )
-    check_unused_bones: BoolProperty(
-        name="Orphan Bones",
-        default=DEFAULT_CHECKS["check_unused_bones"],
-        description="Find armature bones no mesh carries weight on; Try Fix leaves them out",
-    )
-    check_unused_vertex_groups: BoolProperty(
-        name="Unused Vertex Groups",
-        default=DEFAULT_CHECKS["check_unused_vertex_groups"],
-        description="Find vertex groups without weights; Try Fix leaves them out",
-    )
-    check_missing_uv: BoolProperty(
-        name="Missing UV Layer",
-        default=DEFAULT_CHECKS["check_missing_uv"],
-        description="Find meshes without an active UV layer; Try Fix adds one",
-    )
-    check_degenerate_faces: BoolProperty(
-        name="Degenerate Faces",
-        default=DEFAULT_CHECKS["check_degenerate_faces"],
-        description="Find faces without area; Try Fix dissolves them",
-    )
-    check_degenerate_uvs: BoolProperty(
-        name="UV-Degenerate Faces",
-        default=DEFAULT_CHECKS["check_degenerate_uvs"],
-        description="Find faces without UV area; Try Fix dissolves them",
-    )
+    fixes = validation_box.box()
+    fixes.label(text="Apply Fixes", icon="MODIFIER")
+    fixes.prop(operator, "fix_remove_unmatched_vertex_groups")
+    fixes.prop(operator, "fix_apply_autofitter_shape_keys")
+    if operator.advanced_validation:
+        if operator.check_missing_uv:
+            fixes.prop(operator, "fix_add_missing_uv")
+        if operator.check_degenerate_faces:
+            fixes.prop(operator, "fix_dissolve_degenerate_faces")
+        if operator.check_degenerate_uvs:
+            fixes.prop(operator, "fix_dissolve_degenerate_uvs")
+        if operator.is_skinned and operator.check_unweighted_vertices:
+            fixes.prop(operator, "fix_assign_unweighted_vertices")
+        if operator.is_skinned and operator.check_unused_bones:
+            fixes.prop(operator, "fix_remove_unused_bones")
+    if operator.is_skinned:
+        fixes.prop(operator, "fix_limit_influences")
 
 
 class CP77RigJSONExport(Operator, ExportHelper):
@@ -183,14 +171,13 @@ class CP77StreamingSectorExport(Operator, ExportHelper):
             self,
             "Sector export",
             export_project_sectors,
-            context.scene,
             self.filepath,
             props.axl_yaml,
             include_heightfields=props.include_heightfields,
         )
 
 
-class CP77CollectionExport(ExportValidationProperties, Operator, ExportHelper):
+class CP77CollectionExport(Operator, ExportHelper):
     bl_idname = "export_scene.cp77_collection_glb"
     bl_label = "Export for Cyberpunk"
     bl_options = {"REGISTER"}
@@ -214,6 +201,61 @@ class CP77CollectionExport(ExportValidationProperties, Operator, ExportHelper):
         name="Skinned Mesh",
         default=True,
         description="Ensure armatures and vert groups are exported.",
+    )
+    try_fix: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
+        name="Try Fix",
+        default=False,
+        description="Enable selected repairs on temporary export copies",
+    )
+
+    advanced_validation: BoolProperty(
+        name="Additional Validation",
+        default=False,
+        description="Enable optional UV, degeneracy, weight and unused-bone checks",
+    )
+    check_missing_uv: BoolProperty(name="Require Active UV Layer", default=True)
+    check_degenerate_faces: BoolProperty(name="Check Degenerate Faces", default=True)
+    check_degenerate_uvs: BoolProperty(name="Check Degenerate UVs", default=False)
+    check_unweighted_vertices: BoolProperty(
+        name="Check Unweighted Vertices", default=True
+    )
+    check_unused_bones: BoolProperty(
+        name="Check Bones Without Vertex Groups",
+        default=False,
+        description="Check the armature against the union of vertex groups on exported submeshes",
+    )
+    fix_remove_unmatched_vertex_groups: BoolProperty(
+        name="Remove Vertex Groups Without Bones",
+        default=True,
+    )
+    fix_apply_autofitter_shape_keys: BoolProperty(
+        name="Bake Autofitter Shape Keys",
+        default=False,
+        description="Bake Autofitter keys at their current values into temporary export copies",
+    )
+    fix_add_missing_uv: BoolProperty(name="Add Missing UV Layer", default=True)
+    fix_dissolve_degenerate_faces: BoolProperty(
+        name="Dissolve Degenerate Faces/Vertices",
+        default=True,
+    )
+    fix_dissolve_degenerate_uvs: BoolProperty(
+        name="Dissolve UV-Degenerate Faces/Vertices",
+        default=False,
+    )
+    fix_assign_unweighted_vertices: BoolProperty(
+        name="Assign Unweighted Vertices to Root",
+        default=False,
+    )
+    fix_remove_unused_bones: BoolProperty(
+        name="Remove Bones Without Vertex Groups",
+        default=False,
+        description="Create a temporary armature, remove unmatched bones and reparent retained descendants",
+    )
+    fix_limit_influences: BoolProperty(
+        name="Limit Bone Influences",
+        default=False,
+        description="Keep each vertex's 8 strongest bone influences on the temporary export copy and normalize "
+        "them. This changes how those vertices deform",
     )
 
     export_poses: BoolProperty(  # pyright: ignore[reportInvalidTypeForm]
@@ -265,6 +307,36 @@ class CP77CollectionExport(ExportValidationProperties, Operator, ExportHelper):
         row.prop(self, "apply_transform")
         row.prop(self, "apply_modifiers")
 
+    def format_export_results_detailed(self, export_status, directory):
+        exported = []
+        export_skipped = []
+        notes = []
+
+        for name, error, warnings in export_status:
+            if error:
+                export_skipped.append((name, error))
+            else:
+                exported.append(name)
+                notes.extend(f"{name}: {warning}" for warning in warnings)
+
+        parts = [f"exported to {directory}:"]
+        if exported:
+            parts.append("  " + "\n  ".join([f"✓ {name}" for name in exported]))
+        else:
+            parts.append("  (no successful exports)")
+
+        if export_skipped:
+            parts.append("export skipped or failed:")
+            parts.append(
+                "  "
+                + "\n  ".join([f"✗ {name}: {error}" for name, error in export_skipped])
+            )
+        if notes:
+            parts.append("notes:")
+            parts.append("  " + "\n  ".join(notes))
+
+        return "\n".join(parts)
+
     def execute(self, context):
         # A script may set only filepath; the files then go beside it rather than into Blender's working directory.
         directory = self.directory or os.path.dirname(self.filepath)
@@ -293,7 +365,7 @@ class CP77CollectionExport(ExportValidationProperties, Operator, ExportHelper):
         report(
             self,
             "INFO",
-            export_results_message(export_status, directory),
+            self.format_export_results_detailed(export_status, directory),
             logger=_LOG,
         )
         if not any(error is None for _, error, _warnings in export_status):
@@ -378,7 +450,7 @@ class CP77_OT_set_action_export_selection(Operator):
         return {"FINISHED"}
 
 
-class CP77GLBExport(ExportValidationProperties, Operator, ExportHelper):
+class CP77GLBExport(Operator, ExportHelper):
     bl_idname = "export_scene.cp77_glb"
     bl_label = "Export for Cyberpunk"
     bl_options = {"REGISTER"}
@@ -399,6 +471,61 @@ class CP77GLBExport(ExportValidationProperties, Operator, ExportHelper):
         name="Skinned Mesh",
         default=True,
         description="Ensure armatures and vert groups are exported.",
+    )
+    try_fix: BoolProperty(
+        name="Try Fix",
+        default=False,
+        description="Enable selected repairs on temporary export copies",
+    )
+
+    advanced_validation: BoolProperty(
+        name="Additional Validation",
+        default=False,
+        description="Enable optional UV, degeneracy, weight and unused-bone checks",
+    )
+    check_missing_uv: BoolProperty(name="Require Active UV Layer", default=True)
+    check_degenerate_faces: BoolProperty(name="Check Degenerate Faces", default=True)
+    check_degenerate_uvs: BoolProperty(name="Check Degenerate UVs", default=False)
+    check_unweighted_vertices: BoolProperty(
+        name="Check Unweighted Vertices", default=True
+    )
+    check_unused_bones: BoolProperty(
+        name="Check Bones Without Vertex Groups",
+        default=False,
+        description="Check the armature against the union of vertex groups on exported submeshes",
+    )
+    fix_remove_unmatched_vertex_groups: BoolProperty(
+        name="Remove Vertex Groups Without Bones",
+        default=True,
+    )
+    fix_apply_autofitter_shape_keys: BoolProperty(
+        name="Bake Autofitter Shape Keys",
+        default=False,
+        description="Bake Autofitter keys at their current values into temporary export copies",
+    )
+    fix_add_missing_uv: BoolProperty(name="Add Missing UV Layer", default=True)
+    fix_dissolve_degenerate_faces: BoolProperty(
+        name="Dissolve Degenerate Faces/Vertices",
+        default=True,
+    )
+    fix_dissolve_degenerate_uvs: BoolProperty(
+        name="Dissolve UV-Degenerate Faces/Vertices",
+        default=False,
+    )
+    fix_assign_unweighted_vertices: BoolProperty(
+        name="Assign Unweighted Vertices to Root",
+        default=False,
+    )
+    fix_remove_unused_bones: BoolProperty(
+        name="Remove Bones Without Vertex Groups",
+        default=False,
+        description="Create a temporary armature, remove unmatched bones and reparent retained descendants",
+    )
+    fix_limit_influences: BoolProperty(
+        name="Limit Bone Influences",
+        default=False,
+        description="Keep each vertex's 8 strongest bone influences on the temporary export copy and normalize "
+        "them. This changes how those vertices deform",
     )
 
     export_poses: BoolProperty(
@@ -445,7 +572,6 @@ class CP77GLBExport(ExportValidationProperties, Operator, ExportHelper):
     action_index: IntProperty(default=0, options={"SKIP_SAVE"})
     action_list_error: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
     action_list_rig_path: StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
-    _scope = (None, ())
 
     def _requires_source_rig_selection(self):
         return len(self.rig_items) > 1
@@ -520,18 +646,18 @@ class CP77GLBExport(ExportValidationProperties, Operator, ExportHelper):
         self.check(context)
         return ExportHelper.invoke(self, context, event)
 
-    def _export_meshes(self, context):
-        self._scope = export_scope(
-            context,
-            limit_selected=getattr(self, "limit_selected", True),
-            export_visible=getattr(self, "export_visible", False),
-            previous=self._scope,
-        )
-        return self._scope[1]
-
     def check(self, context):
         """Keep the file selector synchronized with the selected export format"""
-        meshes = self._export_meshes(context) if not self.export_poses else ()
+        meshes = (
+            resolve_mesh_export_scope(
+                context,
+                limit_selected=getattr(self, "limit_selected", True),
+                export_visible=getattr(self, "export_visible", False),
+                excluded_objects=collect_excluded_objects(),
+            ).meshes
+            if not self.export_poses
+            else ()
+        )
         morph_export = mesh_glb_path("export.glb", meshes).endswith(".morphtarget.glb")
         extension = (
             ".anims.glb"
@@ -658,22 +784,20 @@ class CP77GLBExport(ExportValidationProperties, Operator, ExportHelper):
             self,
             "Export",
             export_cyberpunk_glb,
-            context,
-            self.filepath,
-            GlbExportOptions(
-                export_poses=self.export_poses,
-                export_visible=self.export_visible,
-                limit_selected=self.limit_selected,
-                is_skinned=self.is_skinned,
-                try_fix=self.try_fix,
-                apply_transform=self.apply_transform,
-                apply_modifiers=self.apply_modifiers,
-                export_tracks=bool(self.export_tracks),
-                root_motion=self.root_motion,
-                selected_action_names=selected_action_names,
-                source_rig_path=self._selected_rig_path() if self.export_poses else "",
-                mesh_validation_options=_mesh_validation_options(self),
-            ),
+            context=context,
+            filepath=self.filepath,
+            export_poses=self.export_poses,
+            export_visible=self.export_visible,
+            limit_selected=self.limit_selected,
+            is_skinned=self.is_skinned,
+            try_fix=self.try_fix,
+            apply_transform=self.apply_transform,
+            apply_modifiers=self.apply_modifiers,
+            export_tracks=bool(self.export_tracks),
+            root_motion=self.root_motion,
+            selected_action_names=selected_action_names,
+            source_rig_path=self._selected_rig_path() if self.export_poses else "",
+            mesh_validation_options=_mesh_validation_options(self),
         )
 
 
@@ -681,6 +805,7 @@ class CP77HairProfileExport(Operator, ExportHelper):
     bl_idname = "export_scene.hp"
     bl_label = "Export Hair Profile"
     bl_description = "Generates a new .hp.json in your mod project folder which can be imported in WolvenKit"
+    bl_parent_id = "CP77_PT_MaterialTools"
 
     filepath: StringProperty(subtype="FILE_PATH")
     filename_ext = ".hp.json"
@@ -729,11 +854,19 @@ class CP77MaterialInstanceExport(Operator, ExportHelper):
             )
             return {"CANCELLED"}
 
-        self.filepath = default_project_output(
-            active_material.get("cp77_project_path", ""),
-            safe_file_stem(active_material.name),
-            ".mi.json",
-        )
+        default_name = active_material.name
+        invalid_chars = r'[<>:"/\\|?*\n\t\r\x00-\x1F]'
+        safe_string = re.sub(invalid_chars, "_", default_name)
+        safe_string = safe_string.replace(" ", "_")
+        safe_string = safe_string.lower()
+
+        projpath = str(active_material.get("cp77_project_path", ""))
+        if projpath == "":
+            self.filepath = f"{safe_string}.mi.json"
+            context.window_manager.fileselect_add(self)
+            return {"RUNNING_MODAL"}
+
+        self.filepath = os.path.join(projpath, f"{safe_string}.mi.json")
         context.window_manager.fileselect_add(self)
         return {"RUNNING_MODAL"}
 
@@ -752,6 +885,7 @@ class CP77MlSetupExport(Operator):
     bl_label = "Export MLSetup"
     # A successful export points the material at the written setup.
     bl_options = {"REGISTER", "UNDO"}
+    bl_parent_id = "CP77_PT_MaterialTools"
     bl_description = "Export selected material to a mlsetup json file which can be converted in WolvenKit"
 
     filepath: StringProperty(subtype="FILE_PATH")

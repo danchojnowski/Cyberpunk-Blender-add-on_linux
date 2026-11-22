@@ -3,15 +3,10 @@ import math
 from ..assetio.paths import backslash_depot_key
 from ..bartmoss.geometry import calc_subuv_offset
 from ..blender import shader_nodes
+from ..materials.blender.images import image_is_placeholder
 from .bundles import decal_uv_transform_socket, smoothstep_socket
-from .decal_nodes import new_material_graph, red_channel, set_transparent, decal_texture
-from .graph import (
-    add_displacement,
-    mix_color_socket,
-    mix_scalar_socket,
-    rgb_socket,
-    value_socket,
-)
+from .decal_nodes import _new_graph, _set_transparent
+from .graph import mix_color_socket, mix_scalar_socket, rgb_socket, value_socket
 from .mat_common import (
     MaterialTypeBase,
     find_input,
@@ -19,6 +14,7 @@ from .mat_common import (
     new_labeled_node,
     param_color,
     param_float,
+    param_texture_path,
 )
 from .normal_math import (
     create_cp77_normal_texture,
@@ -27,6 +23,31 @@ from .normal_math import (
     encode_tangent_normal,
     tangent_to_normal_map,
 )
+
+
+def _texture(owner, nodes, links, data, key, location, uv, *, non_color=False):
+    path = param_texture_path(data, key)
+    if not path:
+        return None
+    image = owner._load_relative_image(
+        path,
+        non_color=non_color,
+        error_label=key,
+    )
+    if image is None or image_is_placeholder(image):
+        return None
+    node = new_labeled_node(nodes, "ShaderNodeTexImage", key, location)
+    node.image = image
+    node.extension = "REPEAT"
+    links.new(uv, find_input(node, "Vector"))
+    return node
+
+
+def _red(nodes, links, source, name, location):
+    separate = new_labeled_node(nodes, "ShaderNodeSeparateColor", name, location)
+    separate.mode = "RGB"
+    links.new(source, separate.inputs["Color"])
+    return separate.outputs["Red"]
 
 
 def _subuv(nodes, uv, frame, columns, rows, location, label):
@@ -50,7 +71,7 @@ class TrailDecal(MaterialTypeBase):
         has_color = not template.endswith("trail_decal_normal.mt")
         has_normal = not template.endswith("trail_decal.mt")
 
-        tree, output, principled = new_material_graph(Mat, "Trail Decal")
+        tree, output, principled = _new_graph(Mat, "Trail Decal")
         nodes, links = tree.nodes, tree.links
         uv = new_labeled_node(nodes, "ShaderNodeUVMap", "UV", (-1800, 300)).outputs[
             "UV"
@@ -70,8 +91,8 @@ class TrailDecal(MaterialTypeBase):
         color_alpha = None
 
         if has_color:
-            diffuse = decal_texture(
-                self, nodes, links, data, None, "DiffuseTexture", (-1260, 560), uv
+            diffuse = _texture(
+                self, nodes, links, data, "DiffuseTexture", (-1260, 560), uv
             )
             diffuse_color = (
                 diffuse.outputs["Color"]
@@ -162,17 +183,18 @@ class TrailDecal(MaterialTypeBase):
             alpha = value_socket(nodes, "Trail Alpha Fallback", 0.0, (1260, 260))
         links.new(alpha, find_input(principled, "Alpha"))
 
-        # The game pulls the trail's depth toward the camera; lifting it along its normal stops the same flicker.
-        add_displacement(
-            Mat,
-            nodes,
-            links,
-            output,
-            param_float(data, "DepthOffset", 0.0),
-            "DepthOffset",
-            (1780, -320),
-        )
-        set_transparent(Mat)
+        depth_offset = param_float(data, "DepthOffset", 0.0)
+        if abs(depth_offset) > 1.0e-12:
+            displacement = new_labeled_node(
+                nodes, "ShaderNodeDisplacement", "DepthOffset", (1780, -320)
+            )
+            displacement.inputs["Height"].default_value = depth_offset
+            displacement.inputs["Midlevel"].default_value = 0.0
+            displacement.inputs["Scale"].default_value = 1.0
+            links.new(
+                displacement.outputs["Displacement"], output.inputs["Displacement"]
+            )
+        _set_transparent(Mat)
 
 
 class AnimatedDecal(MaterialTypeBase):
@@ -250,7 +272,7 @@ class AnimatedDecal(MaterialTypeBase):
 
     def create(self, Data, Mat):
         data = Data if isinstance(Data, dict) else {}
-        tree, _, principled = new_material_graph(Mat, "Animated Decal")
+        tree, _, principled = _new_graph(Mat, "Animated Decal")
         nodes, links = tree.nodes, tree.links
         uv = new_labeled_node(nodes, "ShaderNodeUVMap", "UV", (-2600, 260)).outputs[
             "UV"
@@ -329,21 +351,18 @@ class AnimatedDecal(MaterialTypeBase):
             nodes, links, scaled_uv, next_frame, "Next", (-1820, 160)
         )
 
-        reveal = decal_texture(
+        reveal = _texture(
             self,
             nodes,
             links,
             data,
-            None,
             "RevealMasks",
             (-900, -200),
             next_uv,
             non_color=True,
         )
         reveal_red = (
-            red_channel(
-                nodes, links, reveal.outputs["Color"], "RevealMasks.r", (-680, -200)
-            )
+            _red(nodes, links, reveal.outputs["Color"], "RevealMasks.r", (-680, -200))
             if reveal
             else 1.0
         )
@@ -412,11 +431,11 @@ class AnimatedDecal(MaterialTypeBase):
             location=(-700, -520),
         )
 
-        diffuse_current = decal_texture(
-            self, nodes, links, data, None, "DiffuseTexture", (-900, 620), current_uv
+        diffuse_current = _texture(
+            self, nodes, links, data, "DiffuseTexture", (-900, 620), current_uv
         )
-        diffuse_next = decal_texture(
-            self, nodes, links, data, None, "DiffuseTexture", (-900, 420), next_uv
+        diffuse_next = _texture(
+            self, nodes, links, data, "DiffuseTexture", (-900, 420), next_uv
         )
         current_color = (
             diffuse_current.outputs["Color"]
@@ -477,23 +496,21 @@ class AnimatedDecal(MaterialTypeBase):
         )
 
         normal_alpha = 0.0
-        normal_current = decal_texture(
+        normal_current = _texture(
             self,
             nodes,
             links,
             data,
-            None,
             "NormalTexture",
             (-900, 80),
             current_uv,
             non_color=True,
         )
-        normal_next = decal_texture(
+        normal_next = _texture(
             self,
             nodes,
             links,
             data,
-            None,
             "NormalTexture",
             (-900, -100),
             next_uv,
@@ -560,30 +577,14 @@ class AnimatedDecal(MaterialTypeBase):
             ("RoughnessTexture", "Roughness", -420),
             ("MetalnessTexture", "Metallic", -620),
         ):
-            current = decal_texture(
-                self,
-                nodes,
-                links,
-                data,
-                None,
-                key,
-                (-900, y),
-                current_uv,
-                non_color=True,
+            current = _texture(
+                self, nodes, links, data, key, (-900, y), current_uv, non_color=True
             )
-            following = decal_texture(
-                self,
-                nodes,
-                links,
-                data,
-                None,
-                key,
-                (-900, y - 140),
-                next_uv,
-                non_color=True,
+            following = _texture(
+                self, nodes, links, data, key, (-900, y - 140), next_uv, non_color=True
             )
             current_value = (
-                red_channel(
+                _red(
                     nodes,
                     links,
                     current.outputs["Color"],
@@ -594,7 +595,7 @@ class AnimatedDecal(MaterialTypeBase):
                 else 0.0
             )
             next_value = (
-                red_channel(
+                _red(
                     nodes,
                     links,
                     following.outputs["Color"],
@@ -643,13 +644,13 @@ class AnimatedDecal(MaterialTypeBase):
             location=(1360, 260),
         )
         links.new(alpha, find_input(principled, "Alpha"))
-        set_transparent(Mat)
+        _set_transparent(Mat)
 
 
 class BloodPuddleDecal(MaterialTypeBase):
     def create(self, Data, Mat):
         data = Data if isinstance(Data, dict) else {}
-        tree, _, principled = new_material_graph(Mat, "Blood Puddle Decal")
+        tree, _, principled = _new_graph(Mat, "Blood Puddle Decal")
         nodes, links = tree.nodes, tree.links
         uv = new_labeled_node(nodes, "ShaderNodeUVMap", "UV", (-2200, 300)).outputs[
             "UV"
@@ -679,21 +680,18 @@ class BloodPuddleDecal(MaterialTypeBase):
             name="Puddle Noise UV",
             location=(-1980, 80),
         )
-        noise = decal_texture(
+        noise = _texture(
             self,
             nodes,
             links,
             data,
-            None,
             "NoiseTexture",
             (-1740, 80),
             noise_uv,
             non_color=True,
         )
         noise_value = (
-            red_channel(
-                nodes, links, noise.outputs["Color"], "Puddle Noise.r", (-1520, 80)
-            )
+            _red(nodes, links, noise.outputs["Color"], "Puddle Noise.r", (-1520, 80))
             if noise
             else 0.0
         )
@@ -890,13 +888,13 @@ class BloodPuddleDecal(MaterialTypeBase):
             label="Puddle Normal",
         )
         links.new(normal, find_input(principled, "Normal"))
-        set_transparent(Mat)
+        _set_transparent(Mat)
 
 
 class SimpleEmissiveDecal(MaterialTypeBase):
     def create(self, Data, Mat):
         data = Data if isinstance(Data, dict) else {}
-        tree, _, principled = new_material_graph(Mat, "Simple Emissive Decal")
+        tree, _, principled = _new_graph(Mat, "Simple Emissive Decal")
         nodes, links = tree.nodes, tree.links
         uv = new_labeled_node(nodes, "ShaderNodeUVMap", "UV", (-1800, 260)).outputs[
             "UV"
@@ -922,9 +920,7 @@ class SimpleEmissiveDecal(MaterialTypeBase):
             (-1320, 260),
             "Simple Emissive SubUV",
         )
-        texture = decal_texture(
-            self, nodes, links, data, None, "Diffuse", (-1000, 420), uv
-        )
+        texture = _texture(self, nodes, links, data, "Diffuse", (-1000, 420), uv)
         sampled = (
             texture.outputs["Color"]
             if texture
@@ -932,9 +928,7 @@ class SimpleEmissiveDecal(MaterialTypeBase):
                 nodes, "Diffuse Fallback", (0.0, 0.0, 0.0, 0.0), (-780, 420)
             )
         )
-        gray = red_channel(
-            nodes, links, sampled, "Simple Emissive Diffuse.r", (-760, 560)
-        )
+        gray = _red(nodes, links, sampled, "Simple Emissive Diffuse.r", (-760, 560))
         combine = new_labeled_node(
             nodes, "ShaderNodeCombineColor", "Simple Emissive Grayscale", (-540, 560)
         )
@@ -1006,4 +1000,4 @@ class SimpleEmissiveDecal(MaterialTypeBase):
             location=(400, 300),
         )
         links.new(alpha, find_input(principled, "Alpha"))
-        set_transparent(Mat)
+        _set_transparent(Mat)

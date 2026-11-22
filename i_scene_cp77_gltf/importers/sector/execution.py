@@ -7,37 +7,19 @@ import time
 from bisect import bisect_right
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from functools import partial
 
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
-from ...assetio.paths import depot_path, local_path_key, same_local_path
-from ...assetio.sector_model import PlacedContent
+from ...assetio.paths import local_path_key, same_local_path
 from ...assetio.streaming_sector import COOKED_PLAIN_TYPES
 from ...assetio.values import cname_text, coerce_int, json_array
 from ...bartmoss.matrix import flatten_matrix, matrix_is_identity
-from ...blender.entity.transforms import (
-    clear_pending_child_of_inverse_requests,
-    flush_pending_child_of_inverse_requests,
-    pending_child_of_inverse_count,
-    request_child_of_inverse,
-)
 from ...blender.identity import rna_identity, rna_is_live
-from ...blender.ink import screens as ink_screens
-from ...blender.light_channels import (
-    clear_light_channel_records,
-    is_light_channel_volume,
-    rebuild_light_channel_links,
-    retire_light_channel_volumes,
-    stored_light_channel_records,
-)
-from ...blender.light_near_shadows import unblock_near_geometry
 from ...blender.matrix import instance_matrix, object_world_matrix
 from ...blender.mesh import is_preview_only_modifier
 from ...blender.naming import fit_id_name
 from ...blender.physics.actors import prune_actor_registry
-from ...blender.reflection_probe_registry import mark_registered_reflection_probes_dirty
 from ...blender.shader_nodes import remove_unused_shading
 from ...blender.transactions import (
     BlenderImportTransaction,
@@ -71,14 +53,30 @@ from ...materials.blender.profiling import (
     material_profile_total,
 )
 from ..common.cache import acquire_material_cache, release_material_cache
+from ..common.light_channels import (
+    clear_light_channel_records,
+    is_light_channel_volume,
+    rebuild_light_channel_links,
+    retire_light_channel_volumes,
+    stored_light_channel_records,
+)
+from ..common.paths import depot_path
 from ..common.progress import NO_PROGRESS, BlenderImportProgress
+from ..common.reflection_probe_registry import mark_registered_reflection_probes_dirty
 from ..common.results import ImportResult, unique_messages
+from ..entity.transforms import (
+    clear_pending_child_of_inverse_requests,
+    flush_pending_child_of_inverse_requests,
+    pending_child_of_inverse_count,
+    request_child_of_inverse,
+)
 from .context import (
     SectorContentError,
     SectorExecutionContext,
     SectorNodeContext,
     SectorPlacementOperations,
 )
+from .model import PlacedContent
 from .objects import (
     NodePropertyAssigner,
     assign_id_properties,
@@ -1061,6 +1059,8 @@ def _copy_collection_tree_with_placement_root(
     _remap_blueprint_references(copy_map, blueprint)
 
     if blueprint.animated_widget_roots:
+        from ...blender.ink import screens as ink_screens
+
         for source_root in blueprint.animated_widget_roots:
             copied_root = copy_map.get(source_root)
             if copied_root is not None:
@@ -1157,16 +1157,15 @@ def _variant_lookup(variant_indices, node_data_count):
     )
 
 
-def _collection_flag(collection, key):
+def _is_sector_collection(collection):
     try:
-        return bool(collection.get(key))
+        return bool(collection.get("cp77_sector_path"))
     except (AttributeError, ReferenceError, TypeError) as error:
         log_once(
             _LOG,
             "DEBUG",
-            ("_collection_flag", key, type(error).__name__),
-            "collection flag %s: fell back after %s",
-            key,
+            ("_is_sector_collection", type(error).__name__),
+            "is sector collection: fell back after %s",
             error,
             exc_info=True,
         )
@@ -1175,11 +1174,7 @@ def _collection_flag(collection, key):
 
 def _sector_content_tree(root):
     """Collections owned by root"""
-    stack = [
-        child
-        for child in root.children
-        if not _collection_flag(child, "cp77_sector_path")
-    ]
+    stack = [child for child in root.children if not _is_sector_collection(child)]
     seen = set()
     while stack:
         collection = stack.pop()
@@ -1189,9 +1184,7 @@ def _sector_content_tree(root):
         seen.add(identity)
         yield collection
         stack.extend(
-            child
-            for child in collection.children
-            if not _collection_flag(child, "cp77_sector_path")
+            child for child in collection.children if not _is_sector_collection(child)
         )
 
 
@@ -1281,18 +1274,6 @@ def _content_nodes(sector_collection):
     return nodes
 
 
-def _volume_node(obj, *, nodes, owners, sector_name):
-    node = _item_node(obj) or next(
-        (
-            nodes[rna_identity(owner)]
-            for owner in owners[rna_identity(obj)]
-            if nodes.get(rna_identity(owner)) is not None
-        ),
-        None,
-    )
-    return None if node is None else (node[0] or sector_name, node[1])
-
-
 def _retire_new_channel_volumes(sector_collections, kept):
     """Keep the channel volumes this import placed as records on their sector collection"""
     retired = 0
@@ -1313,12 +1294,20 @@ def _retire_new_channel_volumes(sector_collections, kept):
         volumes = [
             obj for obj in sector_collection.all_objects if rna_identity(obj) in owners
         ]
+
+        def node_of(obj):
+            node = _item_node(obj) or next(
+                (
+                    nodes[rna_identity(owner)]
+                    for owner in owners[rna_identity(obj)]
+                    if nodes.get(rna_identity(owner)) is not None
+                ),
+                None,
+            )
+            return None if node is None else (node[0] or sector_name, node[1])
+
         retired += retire_light_channel_volumes(
-            sector_collection,
-            volumes,
-            node_of=partial(
-                _volume_node, nodes=nodes, owners=owners, sector_name=sector_name
-            ),
+            sector_collection, volumes, node_of=node_of
         )
         for owner_list in owners.values():
             for owner in owner_list:
@@ -1392,6 +1381,21 @@ def _relink_sector_light_channels(
             sector_collections, retire_kept
         )
     return channel_summary
+
+
+def _is_light_link_collection(collection):
+    try:
+        return bool(collection.get("cp77_light_link_scope"))
+    except (AttributeError, ReferenceError, TypeError) as error:
+        log_once(
+            _LOG,
+            "DEBUG",
+            ("_is_light_link_collection", type(error).__name__),
+            "is light link collection: fell back after %s",
+            error,
+            exc_info=True,
+        )
+        return False
 
 
 def _restore_replaced_names(renamed):
@@ -1530,8 +1534,7 @@ def _remove_replaced_sector_content(replaced):
         for obj in objects
         if rna_is_live(obj)
         and all(
-            rna_identity(owner) in doomed_ids
-            or _collection_flag(owner, "cp77_light_link_scope")
+            rna_identity(owner) in doomed_ids or _is_light_link_collection(owner)
             for owner in owners.get(rna_identity(obj), ())
         )
     ]
@@ -1587,7 +1590,7 @@ def _detach_sector_content(sector_collection, replaced):
     top_children = tuple(
         child
         for child in sector_collection.children
-        if not _collection_flag(child, "cp77_sector_path")
+        if not _is_sector_collection(child)
     )
     top_objects = tuple(sector_collection.objects)
     if not top_children and not top_objects:
@@ -1772,12 +1775,7 @@ class _SectorCollectionRouter:
             try:
                 collection["cp77_node_data_index"] = int(node_data_index)
             except (TypeError, ValueError):
-                debug_exception(
-                    _LOG,
-                    "Node data index %r of %s is not a number",
-                    node_data_index,
-                    collection.name,
-                )
+                pass
         elif "cp77_node_data_index" in collection:
             del collection["cp77_node_data_index"]
         self.source_cache[key] = collection
@@ -1923,7 +1921,7 @@ def _organize_sector_placements(
             semantic_name in protected
             or collection.name in protected
             or collection is variant_root
-            or _collection_flag(collection, "cp77_sector_path")
+            or _is_sector_collection(collection)
         ):
             continue
         target = destination(collection)
@@ -2226,7 +2224,6 @@ def _import_sectors_transactional(
                         options,
                         force_refresh=force_refresh,
                         depot_root=depot_root,
-                        blender_context=bpy.context,
                     ) as session:
                         progress.set(5.0, "Planning sectors", force=True)
                         result = _import_sectors(
@@ -2389,8 +2386,6 @@ def _import_sectors(session, *, progress=NO_PROGRESS):
     else:
         track_collection_state(masters, label="MasterInstances")
     masters.hide_viewport = False
-    # Instances render regardless; this only stops the masters themselves rendering.
-    masters.hide_render = True
     session.masters = masters
 
     master_started = time.perf_counter()
@@ -2803,9 +2798,6 @@ def _import_sectors(session, *, progress=NO_PROGRESS):
                         "Sector light channels: kept %d volume(s) as records",
                         channel_summary["retired"],
                     )
-                for sector_collection in created_sector_collections:
-                    if sector_collection is not None:
-                        unblock_near_geometry(sector_collection)
                 mark_registered_reflection_probes_dirty(bpy.context.scene)
             except Exception as error:
                 message = f"Sector light-channel linking skipped: {error}"

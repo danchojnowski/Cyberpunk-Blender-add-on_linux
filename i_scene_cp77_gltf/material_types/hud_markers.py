@@ -2,15 +2,16 @@ from ..assetio.paths import backslash_depot_key
 from ..blender import shader_nodes
 from ..blender.shader_nodes import assign_socket
 from ..materials.blender.images import imageFromFilePath, resolve_relative_image_path
-from ..materials.params import coerce_texture_path, lookup_param
 from .graph import grid_location, mix_color_socket, set_transparent
 from .mat_common import (
     MaterialTypeBase,
+    coerce_texture_path,
+    create_scene_time_value,
     get_or_build_node_group,
+    lookup_param,
     new_labeled_node,
     param_color,
     param_float,
-    scene_time_socket,
 )
 
 _LINE = r"base\fx\textures\ui\fx_network_vis_solidline.xbm"
@@ -612,7 +613,7 @@ def _mask_group():
 class HUDMarkers(MaterialTypeBase):
     """Preview the metadata-selected HUD pixel shader in Eevee and Cycles"""
 
-    def load_relative_image(
+    def _load_relative_image(
         self, path, *, non_color=False, reject_suffixes=(), error_label="HUD marker"
     ):
         """Resolve project overrides before reusing an image already loaded from the depot"""
@@ -627,7 +628,7 @@ class HUDMarkers(MaterialTypeBase):
             )
             if resolved:
                 return imageFromFilePath(resolved, isNormal=non_color)
-        return super().load_relative_image(
+        return super()._load_relative_image(
             path,
             non_color=non_color,
             reject_suffixes=reject_suffixes,
@@ -666,7 +667,8 @@ class HUDMarkers(MaterialTypeBase):
             )
             node.outputs["Value"].default_value = param_float(data, key, default)
             controls[key] = node.outputs["Value"]
-        time = scene_time_socket(tree.nodes, (-1600, -400), "Time")
+        time = create_scene_time_value(tree, -1600, -400, "Time")
+        time.name = "Time"
 
         colors = []
         color_alphas = []
@@ -753,7 +755,9 @@ class HUDMarkers(MaterialTypeBase):
         diffuse_path = coerce_texture_path(
             lookup_param(data, "Diffuse", _GRADIENT if vision else _LINE)
         )
-        image = self.load_relative_image(diffuse_path, error_label="HUD marker Diffuse")
+        image = self._load_relative_image(
+            diffuse_path, error_label="HUD marker Diffuse"
+        )
         samples = []
         for index, extension in enumerate(("EXTEND", "REPEAT")):
             sample = new_labeled_node(
@@ -876,7 +880,7 @@ class HUDMarkers(MaterialTypeBase):
                 "Normal": geometry.outputs["Normal"],
                 "Tiling": controls["WorldSpaceNoiseTilling"],
                 "Speed": controls["NoiseSpeed"],
-                "Time": time,
+                "Time": time.outputs["Value"],
             },
             (-600, -400),
         )

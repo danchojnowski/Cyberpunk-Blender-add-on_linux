@@ -4,8 +4,6 @@ import itertools
 
 import bpy
 
-from .errors import SectorExportError
-
 NEW_SECTOR_KEY = "cp77_new_sector"
 _NEW_SECTOR_NAME = "new_sector"
 
@@ -36,7 +34,7 @@ def add_new_sector(scene) -> bpy.types.Collection:
 def remove_new_sector(scene, collection) -> None:
     """Remove the new-sector collection, moving what it holds to its parent"""
     if not collection.get(NEW_SECTOR_KEY):
-        raise SectorExportError(f"{collection.name} is not a new sector")
+        raise ValueError(f"{collection.name} is not a new sector")
     owner = next(
         (
             candidate

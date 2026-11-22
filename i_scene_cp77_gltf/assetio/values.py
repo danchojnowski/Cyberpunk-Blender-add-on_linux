@@ -7,9 +7,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..bartmoss.single import f32
-from ..core.log import get_logger, log_once
-
-_LOG = get_logger(__name__)
 
 
 def handle_data(value: Any) -> dict:
@@ -56,16 +53,6 @@ def cname_text(value: Any, default: str = "") -> str:
     """Return a CName payload normalized to text"""
     resolved = cname_value(value, default)
     return str(resolved or default)
-
-
-def cname_texts(values: Any) -> list[str]:
-    if not isinstance(values, (list, tuple)):
-        return []
-    return [
-        cname_text(value) if isinstance(value, dict) else value
-        for value in values
-        if isinstance(value, str) or (isinstance(value, dict) and "$value" in value)
-    ]
 
 
 _WRAPPER_KEYS = ("Value", "value", "$value")
@@ -237,41 +224,32 @@ def plain_value(value):
         return str(value)
 
 
-def json_text(value: Any, *, sort_keys: bool = True) -> str:
-    """Compact JSON text that keeps non-ASCII characters, key-sorted unless sort_keys is False"""
+def json_text(value: Any) -> str:
+    """Compact, key-sorted JSON text that keeps non-ASCII characters"""
     return json.dumps(
         value,
         default=plain_value,
         ensure_ascii=False,
         separators=(",", ":"),
-        sort_keys=sort_keys,
+        sort_keys=True,
     )
-
-
-def _stored_json(payload: Any, empty: str) -> Any:
-    try:
-        return json.loads(str(payload or empty))
-    except (TypeError, ValueError) as error:
-        log_once(
-            _LOG,
-            "WARNING",
-            ("stored json", type(error).__name__),
-            "Stored JSON could not be read and was ignored: %s",
-            error,
-            exc_info=True,
-        )
-        return None
 
 
 def json_object(payload: Any) -> dict:
     """The JSON object stored as payload text"""
-    value = _stored_json(payload, "{}")
+    try:
+        value = json.loads(str(payload or "{}"))
+    except (TypeError, ValueError):
+        return {}
     return value if isinstance(value, dict) else {}
 
 
 def json_array(payload: Any) -> list:
     """The JSON array stored as payload text"""
-    value = _stored_json(payload, "[]")
+    try:
+        value = json.loads(str(payload or "[]"))
+    except (TypeError, ValueError):
+        return []
     return list(value) if isinstance(value, list) else []
 
 
@@ -281,13 +259,9 @@ def cname_or_empty(value: Any) -> str:
     return "" if text == "None" else text
 
 
-def nine_digit_float(value: float) -> float:
-    return float(f"{float(value):.9g}")
-
-
 def float32_entry(value: float) -> int | float:
     """The document form of a float field"""
-    printed = nine_digit_float(f32(float(value)))
+    printed = float(f"{f32(float(value)):.9g}")
     return int(printed) if printed.is_integer() else printed
 
 

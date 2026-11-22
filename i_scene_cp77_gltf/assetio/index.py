@@ -67,7 +67,6 @@ class AssetIndexSnapshot:
     _ambiguous_depot: Mapping[str, frozenset[str]]
     directory_mtimes: tuple[tuple[str, int], ...] = ()
     depth: int | None = None
-    path_contains: tuple[tuple[str, str], ...] = ()
 
     @property
     def extensions(self):
@@ -202,17 +201,10 @@ _validated_at = {}
 
 def _snapshot_is_current(snapshot):
     mtimes = snapshot.directory_mtimes
-    if not mtimes:
-        return not os.path.isdir(snapshot.root.value)
-    if len(mtimes) > _MAX_VALIDATED_DIRECTORIES:
+    if not mtimes or len(mtimes) > _MAX_VALIDATED_DIRECTORIES:
         return True
     # One stamp per root and suffix set, holding the generation it checked: a rescan replaces it rather than adding one.
-    key = (
-        snapshot.root.key,
-        snapshot.indexed_suffixes,
-        snapshot.depth,
-        snapshot.path_contains,
-    )
+    key = (snapshot.root.key, snapshot.indexed_suffixes, snapshot.depth)
     now = time.monotonic()
     checked = _validated_at.get(key)
     if (
@@ -237,27 +229,15 @@ def _snapshot_is_current(snapshot):
     return True
 
 
-def _path_filters(path_contains, suffixes):
-    filters = {}
-    for extension, needle in (path_contains or {}).items():
-        suffix = normalize_extension(extension)
-        if suffix in suffixes and needle:
-            filters[suffix] = str(needle).casefold()
-    return tuple(sorted(filters.items()))
-
-
-def build_asset_index(
-    root, extensions, *, policy=IndexPolicy.REUSE, depth=None, path_contains=None
-):
+def build_asset_index(root, extensions, *, policy=IndexPolicy.REUSE, depth=None):
     """The files under root with extensions"""
     global _next_generation
     root_identity = LocalPath.from_value(root)
     suffixes = normalize_extensions(extensions)
     policy = IndexPolicy(policy)
     depth = None if depth is None else max(0, int(depth))
-    filters = _path_filters(path_contains, suffixes)
     cache = _snapshots_by_key if depth is None else _shallow_snapshots_by_key
-    cache_key = (root_identity.key, suffixes, depth, filters)
+    cache_key = (root_identity.key, suffixes, depth)
 
     selected = None
     if policy is IndexPolicy.REUSE:
@@ -265,10 +245,9 @@ def build_asset_index(
             requested = set(suffixes)
             compatible = [
                 snapshot
-                for (root_key, _, snapshot_depth, _filters), snapshot in cache.items()
+                for (root_key, _, snapshot_depth), snapshot in cache.items()
                 if root_key == root_identity.key and snapshot_depth == depth
                 if requested.issubset(snapshot.extensions)
-                if _path_filters(dict(snapshot.path_contains), requested) == filters
             ]
             if compatible:
                 selected = max(
@@ -282,7 +261,6 @@ def build_asset_index(
                     selected.root.key,
                     selected.indexed_suffixes,
                     selected.depth,
-                    selected.path_contains,
                 )
                 if selected_key in cache:
                     cache.move_to_end(selected_key)
@@ -294,7 +272,7 @@ def build_asset_index(
         generation = _next_generation
 
     # Filesystem traversal is deliberately outside the global cache lock.
-    snapshot = _scan_snapshot(root_identity, suffixes, generation, depth, filters)
+    snapshot = _scan_snapshot(root_identity, suffixes, generation, depth)
 
     with _cache_lock:
         existing = cache.get(cache_key)
@@ -342,8 +320,7 @@ def files_by_name(asset_index, extension, *, folder_suffix=""):
         )
 
 
-def _scan_snapshot(root, suffixes, generation, depth=None, path_contains=()):
-    needles = dict(path_contains)
+def _scan_snapshot(root, suffixes, generation, depth=None):
     files_by_suffix = {suffix: [] for suffix in suffixes}
     local_lookup = {suffix: {} for suffix in suffixes}
     depot_lookup = {suffix: {} for suffix in suffixes}
@@ -399,15 +376,12 @@ def _scan_snapshot(root, suffixes, generation, depth=None, path_contains=()):
                             if not suffix:
                                 continue
 
+                            path = os.path.normpath(entry.path)
                             relative = (
                                 os.path.join(relative_folder, entry.name)
                                 if relative_folder
                                 else entry.name
                             )
-                            needle = needles.get(suffix)
-                            if needle and needle not in relative.casefold():
-                                continue
-                            path = os.path.normpath(entry.path)
                             files_by_suffix[suffix].append(path)
                             _record_lookup(
                                 local_lookup[suffix],
@@ -421,8 +395,8 @@ def _scan_snapshot(root, suffixes, generation, depth=None, path_contains=()):
                                 _indexed_depot_key(relative),
                                 path,
                             )
-                        except (PermissionError, OSError):
-                            debug_exception(_LOG, "Could not access %s", entry.path)
+                        except (PermissionError, OSError) as error:
+                            _LOG.debug("Could not access %s: %s", entry.path, error)
             except (PermissionError, OSError) as error:
                 _LOG.warning(
                     "Could not scan directory %s: %s", folder, error, exc_info=True
@@ -456,7 +430,6 @@ def _scan_snapshot(root, suffixes, generation, depth=None, path_contains=()):
         _ambiguous_depot=MappingProxyType(ambiguous_depot),
         directory_mtimes=tuple(directory_mtimes),
         depth=depth,
-        path_contains=tuple(path_contains),
     )
 
 

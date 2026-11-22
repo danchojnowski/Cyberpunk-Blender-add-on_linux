@@ -1,3 +1,5 @@
+from bpy.app.translations import pgettext
+
 from ..blender import shader_nodes
 from ..materials.blender.nodes import create_node
 from .decal_math import ev_to_linear
@@ -22,7 +24,7 @@ class MikoshiParallax(InteriorParallaxCore):
     def create(self, Data, Mat):
         data = Data if isinstance(Data, dict) else {}
         tree = Mat.node_tree
-        bsdf = shader_nodes.principled_bsdf(tree.nodes)
+        bsdf = tree.nodes[pgettext("Principled BSDF")]
         room_uv, _ = self._room_grid(tree, data, tangent_position=True)
         room_map, _, room_interp = self._interior_uv(
             tree,

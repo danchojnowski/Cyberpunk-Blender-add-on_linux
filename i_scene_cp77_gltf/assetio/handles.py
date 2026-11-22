@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Mapping
 from typing import Any
 
 from .values import coerce_int
@@ -21,16 +20,6 @@ def _walk_handles(value: Any, visit) -> None:
 
 def _handle_number(value: Any) -> int:
     return coerce_int(value, -1, unwrap=False)
-
-
-def resolve_handle(value: Any, data_by_handle: Mapping[str, dict]) -> Any:
-    if not isinstance(value, dict):
-        return value
-    if isinstance(value.get("Data"), dict):
-        return value["Data"]
-    if "HandleRefId" in value:
-        return data_by_handle.get(str(value["HandleRefId"]))
-    return value
 
 
 class HandleIndex:
@@ -56,12 +45,14 @@ class HandleIndex:
 
     def resolve(self, value: Any) -> dict:
         """The data a handle or handle reference stands for"""
-        if not isinstance(value, dict) or not (
-            "HandleRefId" in value or "HandleId" in value
-        ):
+        if not isinstance(value, dict):
             return {}
-        data = resolve_handle(value, self._data)
-        return data if isinstance(data, dict) and data is not value else {}
+        if "HandleRefId" in value:
+            return self._data.get(str(value["HandleRefId"]), {})
+        if "HandleId" in value:
+            data = value.get("Data")
+            return data if isinstance(data, dict) else {}
+        return {}
 
     def allocate(self) -> str:
         value = str(self._next)

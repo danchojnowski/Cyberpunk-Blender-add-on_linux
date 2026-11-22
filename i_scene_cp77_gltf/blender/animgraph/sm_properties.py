@@ -1,19 +1,28 @@
 import bpy
 
-from . import sm_edit
+from ...animation.model.animgraph.schema import enums
 from .properties import REDengine_AnimArrayField
-from .sm_model import BLEND_INTERPOLATOR_TYPE, INTERPOLATION_TYPE_ITEMS
+
+INTERPOLATION_TYPE_ENUM = "animAnimStateInterpolationType"
+INTERPOLATION_TYPE_ITEMS = tuple(enums.enum_items(INTERPOLATION_TYPE_ENUM))
+BLEND_INTERPOLATOR_TYPE = "animAnimStateTransitionInterpolator_Blend"
 
 
 def _get_target_name(self):
+    from . import sm_edit
+
     return sm_edit.target_name(self)
 
 
 def _set_target_name(self, value):
+    from . import sm_edit
+
     sm_edit.set_target_name(self, value)
 
 
 def _get_state_label(self):
+    from . import sm_edit
+
     return sm_edit.state_ref_label(self)
 
 

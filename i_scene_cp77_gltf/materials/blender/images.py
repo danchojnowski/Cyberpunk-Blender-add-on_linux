@@ -10,16 +10,16 @@ from ...assetio.index import build_asset_index, files_by_name
 from ...assetio.names import fnv1a64
 from ...assetio.paths import is_windows_absolute, strip_windows_extended_prefix
 from ...blender.identity import rna_identity
-from ...blender.image_cache import LoadedImageIndex
 from ...blender.transactions import track_created_datablock
 from ...core.log import get_logger
-from ..resources import active_material_asset_indexes
 from .helper_caches import register_helper_cache
 from .profiling import begin_material_phase, end_material_phase
 
 _LOG = get_logger(__name__)
-DEFAULT_IMAGE_FORMAT = "png"
 
+_image_lookup_cache = {}
+_image_lookup_complete = False
+_image_lookup_count = -1
 _image_load_failures = {}
 _image_failure_captures = []
 _material_placeholder_sources = {}
@@ -89,6 +89,11 @@ def _file_is_available(filepath):
     return bool(filepath_key and os.path.isfile(filepath_key))
 
 
+def _matches_colorspace(image, is_normal):
+    non_color = image.colorspace_settings.name == "Non-Color"
+    return non_color if is_normal else not non_color
+
+
 def _image_source_path(image):
     try:
         stored = image.get(_IMAGE_SOURCE_PATH_PROP, "")
@@ -118,7 +123,7 @@ def _is_ui_default_image(image):
 
 def ui_default_render_image():
     """Reuse an owned, unmodified UI default while preserving author edits"""
-    global _ui_default_image_name
+    global _ui_default_image_name, _image_lookup_count
     image = bpy.data.images.get(_ui_default_image_name)
     if _is_ui_default_image(image):
         return image
@@ -138,35 +143,62 @@ def ui_default_render_image():
     image.alpha_mode = "STRAIGHT"
     image[_UI_DEFAULT_IMAGE_PROP] = 1
     _ui_default_image_name = image.name
-    _LOADED_IMAGES.count_unindexed_image(before_count)
+    if _image_lookup_complete and _image_lookup_count == before_count:
+        _image_lookup_count = before_count + 1
     return image
 
 
-def _image_lookup_key(image):
-    filepath_key = _filepath_key(_image_source_path(image))
-    if not filepath_key:
-        return None
-    return filepath_key, image.colorspace_settings.name == "Non-Color"
-
-
-_LOADED_IMAGES = LoadedImageIndex(_image_lookup_key)
+def _rebuild_image_lookup_cache():
+    global _image_lookup_complete, _image_lookup_count
+    _image_lookup_cache.clear()
+    for image in bpy.data.images:
+        filepath = _image_source_path(image)
+        filepath_key = _filepath_key(filepath)
+        if filepath_key:
+            is_normal = image.colorspace_settings.name == "Non-Color"
+            _image_lookup_cache.setdefault((filepath_key, is_normal), image.name)
+    _image_lookup_count = len(bpy.data.images)
+    _image_lookup_complete = True
 
 
 def _find_loaded_image(filepath, is_normal=False):
+    global _image_lookup_complete
     started = begin_material_phase()
     result = None
     try:
         filepath_key = _filepath_key(filepath)
         if not filepath_key:
             return None
-        image = _LOADED_IMAGES.find((filepath_key, bool(is_normal)))
+
+        if not _image_lookup_complete or _image_lookup_count != len(bpy.data.images):
+            _rebuild_image_lookup_cache()
+
+        key = (filepath_key, bool(is_normal))
+        cached_name = _image_lookup_cache.get(key)
+        if not cached_name:
+            return None
+
+        image = bpy.data.images.get(cached_name)
         if (
-            image is not None
-            and image_is_placeholder(image)
+            image
+            and _filepath_key(_image_source_path(image)) == filepath_key
+            and _matches_colorspace(image, is_normal)
+        ):
+            if image_is_placeholder(image) and _file_is_available(filepath):
+                return None
+            result = image
+            return result
+
+        _rebuild_image_lookup_cache()
+        cached_name = _image_lookup_cache.get(key)
+        image = bpy.data.images.get(cached_name) if cached_name else None
+        result = image if image and _matches_colorspace(image, is_normal) else None
+        if (
+            result is not None
+            and image_is_placeholder(result)
             and _file_is_available(filepath)
         ):
-            return None
-        result = image
+            result = None
         return result
     finally:
         if result is not None and image_is_placeholder(result):
@@ -187,6 +219,7 @@ def _resolve_indexed_image(reference, root, image_format):
     try:
         if not reference or not root:
             return None
+        from ..resources import active_material_asset_indexes
 
         ext = _image_format_extension(image_format)
         indexes = active_material_asset_indexes()
@@ -197,10 +230,9 @@ def _resolve_indexed_image(reference, root, image_format):
         local_reference = reference.replace("\\", os.sep).replace("/", os.sep)
         indexed_reference = _with_image_extension(local_reference, image_format)
         try:
-            resolved = indexes.resolve(indexed_reference, root, ext)
+            return indexes.resolve(indexed_reference, root, ext)
         except (OSError, ValueError):
             return None
-        return resolved
     finally:
         if started is not None:
             end_material_phase(
@@ -215,7 +247,9 @@ def _resolve_indexed_image(reference, root, image_format):
 
 
 def _cache_image(image, filepath, is_normal):
-    _LOADED_IMAGES.remember((_filepath_key(filepath), bool(is_normal)), image)
+    global _image_lookup_count
+    _image_lookup_cache[(_filepath_key(filepath), bool(is_normal))] = image.name
+    _image_lookup_count = len(bpy.data.images)
 
 
 def _record_image_load_failure(filepath, error):
@@ -356,9 +390,11 @@ def _new_file_image(name, filepath, is_normal=False):
 
 
 def clear_image_lookup_cache():
-    global _ui_default_image_name
-    _LOADED_IMAGES.clear()
+    global _image_lookup_complete, _image_lookup_count, _ui_default_image_name
+    _image_lookup_cache.clear()
     _material_placeholder_sources.clear()
+    _image_lookup_complete = False
+    _image_lookup_count = -1
     _ui_default_image_name = ""
     _cached_filepath_key.cache_clear()
     _with_image_extension.cache_clear()
@@ -367,9 +403,9 @@ def clear_image_lookup_cache():
 
 def image_lookup_cache_stats():
     return {
-        "entries": len(_LOADED_IMAGES),
-        "indexed": _LOADED_IMAGES.complete,
-        "indexed_images": _LOADED_IMAGES.indexed_images,
+        "entries": len(_image_lookup_cache),
+        "indexed": bool(_image_lookup_complete),
+        "indexed_images": max(0, int(_image_lookup_count)),
         "path_keys": _cached_filepath_key.cache_info().currsize,
         "extension_paths": _with_image_extension.cache_info().currsize,
     }
@@ -469,9 +505,7 @@ def _resolve_embedded_image(reference, image_format, roots):
     return None
 
 
-def resolve_relative_image_path(
-    ImgPath, image_format=DEFAULT_IMAGE_FORMAT, DepotPath="", ProjPath=""
-):
+def resolve_relative_image_path(ImgPath, image_format="png", DepotPath="", ProjPath=""):
     """Resolve a relative image through the asset index, then among the textures meshes embed"""
     if isinstance(ImgPath, float) or isinstance(ProjPath, float):
         return None
@@ -483,11 +517,7 @@ def resolve_relative_image_path(
 
 
 def imageFromRelPath(
-    ImgPath,
-    image_format=DEFAULT_IMAGE_FORMAT,
-    isNormal=False,
-    DepotPath="",
-    ProjPath="",
+    ImgPath, image_format="png", isNormal=False, DepotPath="", ProjPath=""
 ):
     DepotPath = DepotPath.replace("\\", os.sep)
     ProjPath = ProjPath.replace("\\", os.sep)

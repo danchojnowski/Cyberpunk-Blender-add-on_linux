@@ -4,15 +4,14 @@ from dataclasses import dataclass
 
 from ...assetio.values import json_object
 from ...blender.collections import root_objects
-from ...blender.entity.skinning import bind_skinned_objects_to_rig
-from ...blender.entity.transforms import (
-    configure_child_of_constraint,
-    flush_pending_child_of_inverse_requests,
-)
 from ...blender.mesh import SOURCE_MESH_EXTRAS_KEY
 from ...entity.domain.chunks import FULL_MASK, parse_mask, part_visible
 from ...gltf.submesh import submesh_index_for_object
-from ...materials.blender.skin_runtime import bind_skin_materials_for_object
+from ...importers.entity.skinning import bind_skinned_objects_to_rig
+from ...importers.entity.transforms import (
+    configure_child_of_constraint,
+    flush_pending_child_of_inverse_requests,
+)
 
 ENABLED_KEY = "cp77_component_enabled"
 CHUNK_MASK_KEY = "cp77_chunk_mask"
@@ -106,6 +105,4 @@ def apply_skin(objects, rig) -> None:
                 if modifier.object is None:
                     modifier.object = rig
     if rig is not None:
-        bind_skinned_objects_to_rig(
-            meshes, rig, bind_materials=bind_skin_materials_for_object
-        )
+        bind_skinned_objects_to_rig(meshes, rig)

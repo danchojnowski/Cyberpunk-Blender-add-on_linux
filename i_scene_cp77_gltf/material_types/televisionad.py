@@ -1,4 +1,5 @@
 import bpy
+from bpy.app.translations import pgettext
 
 from ..blender import shader_nodes
 from ..blender.transactions import new_tracked_datablock
@@ -6,15 +7,15 @@ from ..materials.blender.images import imageFromRelPath
 from ..materials.blender.nodes import (
     bsdf_socket_names,
     create_node,
+    createHash12Group,
     createLerpGroup,
     createVecLerpGroup,
 )
 from .mat_common import (
     MaterialTypeBase,
     create_param_value_nodes,
-    scene_time_socket,
+    create_scene_time_value,
 )
-from .shader_hash import screen_hash12_group
 
 _PARAM_SPECS = (
     ("TilesWidth", "TilesWidth", 400, "TilesWidth", 1.0),
@@ -455,7 +456,7 @@ def get_or_create_broken_uv_group():
 
         brokenUVGroupI = create_node(brokenUVGroup.nodes, "NodeGroupInput", (-1400, 0))
         brokenUVGroupO = create_node(brokenUVGroup.nodes, "NodeGroupOutput", (200, 0))
-        hash12G = screen_hash12_group()
+        hash12G = createHash12Group()
         hash12 = create_node(
             brokenUVGroup.nodes, "ShaderNodeGroup", (-650, -50), label="hash12"
         )
@@ -680,7 +681,7 @@ def get_or_create_rnd_color_index_group():
             0.1625,
             0.1625,
         )
-        hash12G = screen_hash12_group()
+        hash12G = createHash12Group()
         hash12_2 = create_node(
             rndColorIGroup.nodes, "ShaderNodeGroup", (-50, -25), label="hash12"
         )
@@ -1227,7 +1228,7 @@ class TelevisionAd(MaterialTypeBase):
 
     def create(self, Data, Mat):
         CurMat = Mat.node_tree
-        pBSDF = shader_nodes.principled_bsdf(CurMat.nodes)
+        pBSDF = CurMat.nodes[pgettext("Principled BSDF")]
         sockets = bsdf_socket_names()
         pBSDF.inputs[sockets["Specular"]].default_value = 0
 
@@ -1251,7 +1252,7 @@ class TelevisionAd(MaterialTypeBase):
         dirtUVScaleU = params["DirtUvScaleU"]
         dirtUVScaleV = params["DirtUvScaleV"]
 
-        time = scene_time_socket(CurMat.nodes, (-2000, 550), "Time")
+        time = create_scene_time_value(CurMat, -2000, 550, "Time")
 
         UVNode = create_node(CurMat.nodes, "ShaderNodeTexCoord", (-2000, 650))
 
@@ -1354,7 +1355,7 @@ class TelevisionAd(MaterialTypeBase):
             CurMat.links.new(tilesW.outputs["Value"], n.inputs["TilesWidth"])
             CurMat.links.new(tilesH.outputs["Value"], n.inputs["TilesHeight"])
             CurMat.links.new(playSpeed.outputs["Value"], n.inputs["PlaySpeed"])
-            CurMat.links.new(time, n.inputs["Time"])
+            CurMat.links.new(time.outputs["Value"], n.inputs["Time"])
 
             frameGroup = get_or_create_frame_add_group()
 
@@ -1400,7 +1401,7 @@ class TelevisionAd(MaterialTypeBase):
             shader_nodes.socket_by_identifier(
                 add7.inputs, "Value_001"
             ).default_value = 0.375
-            CurMat.links.new(time, add7.inputs["Value"])
+            CurMat.links.new(time.outputs["Value"], add7.inputs["Value"])
             CurMat.links.new(add7.outputs["Value"], frac2.inputs["Value"])
             CurMat.links.new(frac2.outputs["Value"], lerp.inputs["t"])
 
@@ -1412,7 +1413,7 @@ class TelevisionAd(MaterialTypeBase):
             brokenUV.node_tree = brokenUVGroup
 
             CurMat.links.new(lerp.outputs["result"], brokenUV.inputs["rndBlocks"])
-            CurMat.links.new(time, brokenUV.inputs["Time"])
+            CurMat.links.new(time.outputs["Value"], brokenUV.inputs["Time"])
             CurMat.links.new(UVNode.outputs["UV"], brokenUV.inputs["UV"])
 
             rndColorIGroup = get_or_create_rnd_color_index_group()
@@ -1422,7 +1423,7 @@ class TelevisionAd(MaterialTypeBase):
             )
             rndColorIndex.node_tree = rndColorIGroup
             CurMat.links.new(lerp.outputs["result"], rndColorIndex.inputs["rndBlocks"])
-            CurMat.links.new(time, rndColorIndex.inputs["Time"])
+            CurMat.links.new(time.outputs["Value"], rndColorIndex.inputs["Time"])
             CurMat.links.new(UVNode.outputs["UV"], rndColorIndex.inputs["UV"])
 
             rndColorGroup = get_or_create_rnd_color_group()
@@ -1597,7 +1598,7 @@ class TelevisionAd(MaterialTypeBase):
                 CurMat.nodes, CurMat.links, "ADD", location=(0, 975), hide=True
             ).node
 
-            CurMat.links.new(time, div9.inputs["Value"])
+            CurMat.links.new(time.outputs["Value"], div9.inputs["Value"])
             CurMat.links.new(div9.outputs["Value"], frac7.inputs["Value"])
             CurMat.links.new(
                 frac7.outputs["Value"],
@@ -1667,7 +1668,7 @@ class TelevisionAd(MaterialTypeBase):
                 shader_nodes.socket_by_identifier(mixRGB2.outputs, "Result_Color"),
                 separate4.inputs["Color"],
             )
-            CurMat.links.new(time, mul11.inputs["Value"])
+            CurMat.links.new(time.outputs["Value"], mul11.inputs["Value"])
             CurMat.links.new(
                 HUEcSpeed.outputs["Value"],
                 shader_nodes.socket_by_identifier(mul11.inputs, "Value_001"),

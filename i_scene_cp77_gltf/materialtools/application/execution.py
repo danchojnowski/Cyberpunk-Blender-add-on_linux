@@ -11,11 +11,10 @@ from ...assetio.catalog import (
 from ...assetio.index import IndexPolicy
 from ...assetio.paths import LocalPath
 from ...bartmoss.scalar import clamp_scalar
-from ...blender.transactions import transactional
 from ...core.log import debug_exception, get_logger
 from ...material_types.vehicle_decal_dirt import prepare_vehicle_dirt_mesh
 from ...materials.blender.builder import MaterialBuilder
-from ...materials.blender.images import DEFAULT_IMAGE_FORMAT, imageFromFilePath
+from ...materials.blender.images import imageFromFilePath
 from ...materials.blender.multilayer import cp77_create_palette
 from ...materials.blender.nodes import createOverrideTable
 from ..depot.paths import (
@@ -30,10 +29,12 @@ from ..depot.paths import (
 from .model import (
     MaterialDepotScanResult,
     MaterialTemplateBuildResult,
+    MicroblendLoadResult,
     MultilayerTemplateLoadResult,
 )
 from .options import (
     MATERIAL_TOOL_RESOURCE_EXTENSIONS,
+    MULTILAYER_SETUP_EXTENSION,
     MULTILAYER_TEMPLATE_EXTENSION,
     MaterialToolsRequest,
 )
@@ -79,7 +80,6 @@ def _session_root_for_file(filepath, preferred_root=""):
     return LocalPath.from_value(os.path.dirname(path)).value
 
 
-@transactional("Material template creation")
 def create_material_from_template(context, template_json, depot_root=""):
     session_root = _session_root_for_file(template_json, depot_root)
     request = MaterialToolsRequest(
@@ -115,9 +115,7 @@ def create_material_from_template(context, template_json, depot_root=""):
             "Data": template_defaults(root),
         }
         materials = (raw_material,)
-        builder = MaterialBuilder(
-            None, resolved_root, DEFAULT_IMAGE_FORMAT, template_json
-        )
+        builder = MaterialBuilder(materials, resolved_root, "png", template_json)
         material = builder.create(materials, 0, force_rebuild=True)
         if material is None:
             raise RuntimeError(
@@ -176,18 +174,15 @@ def load_multilayer_template(filepath, depot_root=""):
     )
 
 
-def scan_material_depot(root):
+def scan_multilayer_templates(root):
     request = MaterialToolsRequest(
         root=root,
-        extensions=(MULTILAYER_TEMPLATE_EXTENSION, *IMAGE_EXTENSIONS),
+        extensions=(MULTILAYER_TEMPLATE_EXTENSION, MULTILAYER_SETUP_EXTENSION),
         index_policy=IndexPolicy.REFRESH,
-        path_contains=tuple((suffix, "microblend") for suffix in IMAGE_EXTENSIONS),
     )
     failures = []
     loaded = 0
     first_palette = None
-    microblends_loaded = 0
-    microblends_existing = 0
     with MaterialToolsSession(request) as session:
         for path in session.files(MULTILAYER_TEMPLATE_EXTENSION):
             relative = relative_to_root(path, request.root)
@@ -214,23 +209,47 @@ def scan_material_depot(root):
             loaded += 1
             if first_palette is None:
                 first_palette = palette
-        for path in session.files(*IMAGE_EXTENSIONS):
+        setup_count = sum(1 for _path in session.files(MULTILAYER_SETUP_EXTENSION))
+        collisions = len(session.collisions)
+    return MaterialDepotScanResult(
+        loaded_count=loaded,
+        setup_count=setup_count,
+        failures=tuple(failures),
+        collision_count=collisions,
+        first_palette=first_palette,
+    )
+
+
+def load_depot_microblends(root):
+    request = MaterialToolsRequest(
+        root=root,
+        extensions=tuple(IMAGE_EXTENSIONS),
+        index_policy=IndexPolicy.REFRESH,
+    )
+    failures = []
+    loaded = 0
+    existing = 0
+    with MaterialToolsSession(request) as session:
+        paths = tuple(
+            path
+            for path in session.files(*IMAGE_EXTENSIONS)
+            if "microblend" in path.casefold()
+        )
+        for path in paths:
             try:
                 before = len(bpy.data.images)
                 imageFromFilePath(path, isNormal=True)
                 if len(bpy.data.images) > before:
-                    microblends_loaded += 1
+                    loaded += 1
                 else:
-                    microblends_existing += 1
+                    existing += 1
             except Exception as error:
                 debug_exception(_LOG, "Could not load the microblend %s", path)
                 failures.append(f"{path}: {type(error).__name__}: {error}")
         collisions = len(session.collisions)
-    return MaterialDepotScanResult(
-        template_count=loaded,
-        microblend_loaded_count=microblends_loaded,
-        microblend_existing_count=microblends_existing,
+    return MicroblendLoadResult(
+        loaded_count=loaded,
+        existing_count=existing,
         failures=tuple(failures),
         collision_count=collisions,
-        first_palette=first_palette,
     )

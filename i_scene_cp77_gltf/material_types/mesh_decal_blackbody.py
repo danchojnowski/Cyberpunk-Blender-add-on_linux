@@ -9,7 +9,6 @@ from .blackbody_nodes import (
 from .bundles import emissive_scale_bundle
 from .decal_contracts import contract_defaults
 from .graph import (
-    add_displacement,
     color_channel_socket,
     mix_color_socket,
     mix_scalar_socket,
@@ -18,7 +17,9 @@ from .graph import (
 )
 from .mat_common import (
     MaterialTypeBase,
+    coerce_texture_path,
     find_input,
+    lookup_param,
     material_property_socket,
     new_labeled_node,
     param_float,
@@ -30,12 +31,11 @@ _DEFAULTS = contract_defaults(TEMPLATE)
 
 
 class MeshDecalBlackbody(MaterialTypeBase):
-    texture_defaults = {
-        key: value for key, value in _DEFAULTS.items() if isinstance(value, str)
-    }
+    def _texture_path(self, data, key):
+        return coerce_texture_path(lookup_param(data, key, _DEFAULTS.get(key, "")))
 
     def _texture(self, nodes, links, data, key, location, uv):
-        image = self.load_relative_image(
+        image = self._load_relative_image(
             self._texture_path(data, key),
             non_color=True,
             error_label="mesh decal blackbody",
@@ -292,15 +292,16 @@ class MeshDecalBlackbody(MaterialTypeBase):
         vertex_offset = param_float(
             data, "VertexOffsetFactor", _DEFAULTS["VertexOffsetFactor"]
         )
-        add_displacement(
-            Mat,
-            nodes,
-            links,
-            output,
-            vertex_offset,
-            "VertexOffsetFactor",
-            (7040, -620),
-        )
+        if abs(vertex_offset) > 1.0e-12:
+            displacement = new_labeled_node(
+                nodes, "ShaderNodeDisplacement", "VertexOffsetFactor", (7040, -620)
+            )
+            find_input(displacement, "Height").default_value = vertex_offset
+            find_input(displacement, "Midlevel").default_value = 0.0
+            find_input(displacement, "Scale").default_value = 1.0
+            links.new(
+                displacement.outputs["Displacement"], output.inputs["Displacement"]
+            )
 
         set_transparent(Mat)
         if hasattr(Mat, "use_transparency_overlap"):

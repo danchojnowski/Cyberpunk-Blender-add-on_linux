@@ -10,7 +10,6 @@ from ...blender.action_metadata import (
     ensure_action_defaults,
 )
 from ...blender.animation_context import (
-    action_index,
     active_armature,
     local_actions,
     track_animation_data,
@@ -39,9 +38,11 @@ def action_counts() -> tuple[int, int]:
 def _select_in_list(settings, slot: ActionListSlot, action) -> None:
     if settings is None:
         return
-    index = action_index(action)
-    if index >= 0 and int(getattr(settings, slot.selector, -1)) != index:
-        setattr(settings, slot.selector, index)
+    for index, candidate in enumerate(bpy.data.actions):
+        if candidate == action:
+            if int(getattr(settings, slot.selector, -1)) != index:
+                setattr(settings, slot.selector, index)
+            return
 
 
 def delete_action(context, name: str) -> OperationResult:

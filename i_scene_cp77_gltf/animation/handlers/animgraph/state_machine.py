@@ -3,12 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from ...domain.animgraph.branch_frames import interpolate_frames
-from ...domain.animgraph.state_machine import (
-    choose_transition,
-    interpolation_progress,
-    prefer_transition,
-    reset_condition,
-)
+from ...domain.animgraph.state_machine import choose_transition, prefer_transition
 from ...model.animgraph.handles import normalized_source_handle
 from .base import GraphNodeHandler
 
@@ -27,17 +22,17 @@ class StateMachineHandler(GraphNodeHandler):
         default_state = max(
             0, min(int(data.get("defaultStateIndex", 0) or 0), len(states) - 1)
         )
-        first_activation = step.handle not in context.state_machine_states
-        resumed_transition = step.handle in context.state_machine_pending
+        first_activation = step.handle not in context._state_machine_states
+        resumed_transition = step.handle in context._state_machine_pending
         active_state = int(
-            context.state_machine_pending.pop(
+            context._state_machine_pending.pop(
                 step.handle,
-                context.state_machine_states.get(step.handle, default_state),
+                context._state_machine_states.get(step.handle, default_state),
             )
         )
         if not 0 <= active_state < len(step.program_node.children):
             active_state = default_state
-        context.state_machine_states[step.handle] = active_state
+        context._state_machine_states[step.handle] = active_state
         self._push_state_tags(context, step.handle, states)
         try:
             return self._execute_state_machine(
@@ -64,7 +59,7 @@ class StateMachineHandler(GraphNodeHandler):
 
     def _push_state_tags(self, context, handle, states) -> None:
         """Publish the current state's tags"""
-        blend = context.state_machine_blends.get(handle)
+        blend = context._state_machine_blends.get(handle)
         if blend is not None:
             progress = min(
                 1.0,
@@ -75,11 +70,11 @@ class StateMachineHandler(GraphNodeHandler):
                 (int(blend["target"]), progress),
             )
         else:
-            weighted = ((int(context.state_machine_states.get(handle, 0)), 1.0),)
+            weighted = ((int(context._state_machine_states.get(handle, 0)), 1.0),)
         for index, value in weighted:
             if 0 <= index < len(states):
                 for tag in states[index].get("tags", ()) or ():
-                    context.data_flow[tag] = value
+                    context._data_flow[tag] = value
 
     def _execute_state_machine(
         self,
@@ -105,15 +100,15 @@ class StateMachineHandler(GraphNodeHandler):
         external_events = context.external_events()
         transitions = tuple(data.get("transitions", ()) or ())
         global_transitions = tuple(data.get("globalTransitions", ()) or ())
-        history = context.state_condition_history
-        blends = context.state_machine_blends
-        frame_id = int(context.perf_frames)
+        history = context._state_condition_history
+        blends = context._state_machine_blends
+        frame_id = int(context._perf_frames)
 
         blend = blends.get(handle)
         if blend is not None:
             source_state = int(blend["source"])
             target_state = int(blend["target"])
-            source_frame = context.execute_program(
+            source_frame = context._execute_program(
                 program_node.children[source_state],
                 raw_dt,
                 time_dilation,
@@ -123,7 +118,7 @@ class StateMachineHandler(GraphNodeHandler):
                 input_frame,
                 additive_branch,
             )
-            target_frame = context.execute_program(
+            target_frame = context._execute_program(
                 program_node.children[target_state],
                 raw_dt,
                 time_dilation,
@@ -137,19 +132,24 @@ class StateMachineHandler(GraphNodeHandler):
             elapsed = float(blend.get("elapsed", 0.0)) + float(raw_dt)
             progress = min(1.0, elapsed / duration)
             blend["elapsed"] = elapsed
-            eased = interpolation_progress(
-                progress, str(blend.get("interpolationType", "Linear") or "Linear")
+            progress_fn = globals().get("interpolation_progress")
+            eased = (
+                progress_fn(
+                    progress, str(blend.get("interpolationType", "Linear") or "Linear")
+                )
+                if callable(progress_fn)
+                else progress
             )
             result = interpolate_frames(source_frame, target_frame, eased)
             if progress >= 1.0:
-                context.state_machine_states[handle] = target_state
+                context._state_machine_states[handle] = target_state
                 blends.pop(handle, None)
                 if bool(
                     states[target_state].get(
                         "preventTransitionsInActivationFrame", False
                     )
                 ):
-                    context.state_machine_transition_delay.add(handle)
+                    context._state_machine_transition_delay.add(handle)
             frame_cache[cache_key] = result
             return result
 
@@ -160,7 +160,7 @@ class StateMachineHandler(GraphNodeHandler):
                 range(len(conditional_entries)),
                 features=features,
                 external_events=external_events,
-                anim_end_events=frozenset(context.anim_end_events),
+                anim_end_events=frozenset(context._anim_end_events),
                 history=history,
                 frame_id=frame_id,
                 dt=raw_dt,
@@ -175,20 +175,22 @@ class StateMachineHandler(GraphNodeHandler):
                         f"StateMachine {handle or program_node.path} conditional entry targets invalid state {target}"
                     )
                 active_state = target
-                context.state_machine_states[handle] = active_state
-                context.reset_branch_activation(program_node.children[active_state])
-                reset_condition(
-                    conditional_entries[entry.index].get("condition"),
-                    history,
-                    (handle, "entry", entry.index),
-                )
+                context._state_machine_states[handle] = active_state
+                context._reset_branch_activation(program_node.children[active_state])
+                resetter = globals().get("reset_condition")
+                if callable(resetter):
+                    resetter(
+                        conditional_entries[entry.index].get("condition"),
+                        history,
+                        (handle, "entry", entry.index),
+                    )
 
-        transition_delay = handle in context.state_machine_transition_delay
+        transition_delay = handle in context._state_machine_transition_delay
         if transition_delay:
-            context.state_machine_transition_delay.discard(handle)
+            context._state_machine_transition_delay.discard(handle)
 
         if not resumed_transition:
-            result = context.execute_program(
+            result = context._execute_program(
                 program_node.children[active_state],
                 raw_dt,
                 time_dilation,
@@ -204,7 +206,7 @@ class StateMachineHandler(GraphNodeHandler):
                 frame_cache[cache_key] = result
                 return result
         elif transition_delay:
-            result = context.execute_program(
+            result = context._execute_program(
                 program_node.children[active_state],
                 raw_dt,
                 time_dilation,
@@ -224,7 +226,7 @@ class StateMachineHandler(GraphNodeHandler):
                 states[active_state].get("outTransitionIndices", ()) or (),
                 features=features,
                 external_events=external_events,
-                anim_end_events=frozenset(context.anim_end_events),
+                anim_end_events=frozenset(context._anim_end_events),
                 history=history,
                 frame_id=frame_id,
                 dt=raw_dt,
@@ -237,7 +239,7 @@ class StateMachineHandler(GraphNodeHandler):
             range(len(global_transitions)),
             features=features,
             external_events=external_events,
-            anim_end_events=frozenset(context.anim_end_events),
+            anim_end_events=frozenset(context._anim_end_events),
             history=history,
             frame_id=frame_id,
             dt=raw_dt,
@@ -255,19 +257,21 @@ class StateMachineHandler(GraphNodeHandler):
             is_global = global_choice is choice
             source_transitions = global_transitions if is_global else transitions
             transition = source_transitions[choice.index]
-            reset_condition(
-                transition.get("condition"),
-                history,
-                (handle, "global" if is_global else "local", choice.index),
-            )
-            context.reset_branch_activation(program_node.children[target])
+            resetter = globals().get("reset_condition")
+            if callable(resetter):
+                resetter(
+                    transition.get("condition"),
+                    history,
+                    (handle, "global" if is_global else "local", choice.index),
+                )
+            context._reset_branch_activation(program_node.children[target])
             inertial = (
                 bool(transition.get("canRequestInertialization", False))
                 if isinstance(transition, Mapping)
                 else False
             )
             if inertial:
-                context.request_inertialization(float(choice.duration))
+                context._request_inertialization(float(choice.duration))
             if choice.duration > 1e-8 and not inertial:
                 interpolator = (
                     transition.get("interpolator")
@@ -290,12 +294,12 @@ class StateMachineHandler(GraphNodeHandler):
                     ),
                 }
             else:
-                context.state_machine_pending[handle] = target
+                context._state_machine_pending[handle] = target
                 if bool(
                     states[target].get("preventTransitionsInActivationFrame", False)
                 ):
-                    context.state_machine_transition_delay.add(handle)
-                result = context.execute_program(
+                    context._state_machine_transition_delay.add(handle)
+                result = context._execute_program(
                     program_node.children[target],
                     raw_dt,
                     time_dilation,
@@ -306,7 +310,7 @@ class StateMachineHandler(GraphNodeHandler):
                     additive_branch,
                 )
         elif resumed_transition:
-            result = context.execute_program(
+            result = context._execute_program(
                 program_node.children[active_state],
                 raw_dt,
                 time_dilation,

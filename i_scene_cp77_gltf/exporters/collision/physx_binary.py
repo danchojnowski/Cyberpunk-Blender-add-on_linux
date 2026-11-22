@@ -5,14 +5,13 @@ import tempfile
 from ...assetio.atomic import atomic_replace_staged, atomic_write_bytes
 from ...blender.physics.bridge_session import require_initialized_bridge
 from ...core.log import debug_exception, get_logger
-from .errors import CollisionExportError
 
 _LOG = get_logger(__name__)
 
 
 def export_cooked_shape(shape, filepath):
     if not shape.cooked_data:
-        raise CollisionExportError("Mesh not cooked yet. Run 'Cook' first.")
+        raise ValueError("Mesh not cooked yet. Run 'Cook' first.")
     data = base64.b64decode(shape.cooked_data.encode("ascii"))
     atomic_write_bytes(filepath, data)
     return len(data)

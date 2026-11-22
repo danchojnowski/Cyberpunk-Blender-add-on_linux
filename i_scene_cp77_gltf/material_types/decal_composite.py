@@ -15,9 +15,8 @@ from ..blender.naming import fit_id_name
 from ..blender.shader_nodes import assign_socket, outputs_detached, replace_link
 from ..blender.transactions import track_created_datablock
 from ..core.log import get_logger, log_once
-from ..materials.blender.layout import set_absolute_locations
 from .bundles import material_bundle_node
-from .graph import mix_color_socket, mix_scalar_socket
+from .graph import mix_color_socket, mix_scalar_socket, set_absolute_locations
 from .mat_common import find_input, get_or_build_node_group, new_labeled_node
 
 _LOG = get_logger(__name__)
@@ -1602,26 +1601,6 @@ def _blend_decal_channels(tree, decal, cloner, targets, profile=None):
         normal_factor,
         1.0 if projected_rnm else sector_alpha,
     )
-    # A normal-only plain decal covers only where its normal map has detail, as its own surface does, so the
-    # decal layers stacked beneath it show where it is flat.
-    normal_gate = _find_node(
-        decal, ("Plain Vehicle Normal Coverage", "Mesh Decal Normal Coverage")
-    )
-    normal_detail = (
-        shader_nodes.socket_by_identifier(normal_gate.inputs, "Value_001")
-        if normal_gate is not None
-        else None
-    )
-    if normal_detail is not None and normal_detail.is_linked:
-        normal_factor = shader_nodes.math(
-            nodes,
-            links,
-            "MULTIPLY",
-            normal_factor,
-            cloner.clone_socket(normal_detail.links[0].from_socket),
-            name="Conformal Normal Detail Coverage",
-            location=(-760, -10),
-        )
     material_factor = _scale_factor(
         nodes,
         links,

@@ -1,3 +1,5 @@
+from bpy.app.translations import pgettext
+
 from ..blender import shader_nodes
 from ..materials.blender.images import image_has_alpha
 from ..materials.blender.nodes import (
@@ -9,12 +11,12 @@ from .emissive_common import ABSENT_COLOR_FALLBACK
 from .graph import set_alpha_clip
 from .mat_common import (
     MaterialTypeBase,
+    create_normal_map_rel,
     param_color,
     param_float,
     param_texture_path,
 )
 from .metalbase_common import scale_components
-from .normal_math import create_normal_map_rel
 
 
 class EmissiveControl(MaterialTypeBase):
@@ -22,7 +24,7 @@ class EmissiveControl(MaterialTypeBase):
         path = param_texture_path(data, key)
         if not path:
             return
-        image = self.load_relative_image(
+        image = self._load_relative_image(
             path, non_color=True, error_label="emissive control"
         )
         node = create_node(
@@ -50,7 +52,7 @@ class EmissiveControl(MaterialTypeBase):
         path = param_texture_path(data, "BaseColor")
         if not path:
             return None
-        image = self.load_relative_image(path, error_label="emissive control")
+        image = self._load_relative_image(path, error_label="emissive control")
         return create_node(
             CurMat.nodes,
             "ShaderNodeTexImage",
@@ -93,7 +95,7 @@ class EmissiveControl(MaterialTypeBase):
         path = param_texture_path(data, "Emissive")
         if not path:
             return scaled_color, False
-        image = self.load_relative_image(
+        image = self._load_relative_image(
             path, non_color=True, error_label="emissive control"
         )
         if image is None:
@@ -232,7 +234,7 @@ class EmissiveControl(MaterialTypeBase):
         Mat.use_nodes = True
         CurMat = Mat.node_tree
         sockets = bsdf_socket_names()
-        pBSDF = shader_nodes.principled_bsdf(CurMat.nodes)
+        pBSDF = CurMat.nodes[pgettext("Principled BSDF")]
 
         base_color_node = self._base_color(CurMat, data)
 

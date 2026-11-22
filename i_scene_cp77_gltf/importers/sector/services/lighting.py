@@ -5,9 +5,7 @@ import time
 import bpy
 from mathutils import Matrix
 
-from ....assetio.paths import depot_path
 from ....assetio.values import cname_text, field_float
-from ....blender.light_environment import register_environment_lights
 from ....blender.light_preview import (
     animate_flicker,
     capture_base_energy,
@@ -24,7 +22,9 @@ from ....entity.domain.light_representation import (
 )
 from ....entity.domain.lights import static_light_flicker_seed, static_light_settings
 from ....redSpace.transforms import red_light_local_to_blender_light
+from ...common.light_environment import register_environment_lights
 from ...common.light_probe_participation import apply_probe_capture_participation
+from ...common.paths import depot_path
 
 
 class _Laps:
@@ -63,14 +63,17 @@ class StaticLightingService:
             "flicker": 0.0,
         }
 
-    def finalize_environment_registry(self, scene):
+    def finalize_environment_registry(self, scene=None):
         objects = tuple(obj for obj in self._registry_objects if obj is not None)
         self._registry_objects.clear()
         if not objects:
             return 0
         started = time.perf_counter()
         try:
-            return register_environment_lights(scene, objects)
+            return register_environment_lights(
+                scene if scene is not None else getattr(bpy.context, "scene", None),
+                objects,
+            )
         finally:
             self._registry_flush_seconds += time.perf_counter() - started
             self._registry_flushes += 1

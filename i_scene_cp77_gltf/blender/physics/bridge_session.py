@@ -25,9 +25,9 @@ class BlenderBridgeHost:
 BRIDGE_HOST = BlenderBridgeHost()
 
 
-def require_initialized_bridge(context=None, *, retry_transient=False):
+def require_initialized_bridge(context=None):
     """The initialized bridge"""
-    bridge = initialized_bridge(retry_transient=retry_transient)
+    bridge = initialized_bridge()
     if context is not None:
         scene = getattr(context, "scene", None)
         scene_physx = getattr(scene, "physx", None) if scene is not None else None

@@ -133,7 +133,7 @@ class Hair(MaterialTypeBase):
         tree = Mat.node_tree
         nodes = tree.nodes
         links = tree.links
-        principled = shader_nodes.principled_bsdf(nodes)
+        principled = nodes.get("Principled BSDF")
         if principled is None:
             return
 

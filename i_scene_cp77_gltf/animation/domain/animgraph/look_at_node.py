@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 from collections.abc import Mapping, MutableMapping
 
-from ....assetio.values import coerce_float
 from ....bartmoss.qs_transform import QsTransform, compose, relative_to
 from ....bartmoss.quaternion import (
     axis_angle_scalar_xyzw,
@@ -18,6 +17,9 @@ from .topology import has_link
 
 
 def look_at_node_data(node_type, node):
+    def angle(key, default):
+        return float(node.get(key, default) if node.get(key) is not None else default)
+
     return {
         "transform": index_name(
             node.get("transform"), "animTransformIndex", allow_text=True
@@ -25,7 +27,7 @@ def look_at_node_data(node_type, node):
         "forwardAxis": str(node.get("forwardAxis", "X") or "X"),
         "useLimits": bool(node.get("useLimits", False)),
         "limitAxis": str(node.get("limitAxis", "X") or "X"),
-        "limitAngle": coerce_float(node.get("limitAngle"), 90.0, unwrap=False),
+        "limitAngle": angle("limitAngle", 90.0),
         "hasTargetNode": has_link(node, "targetNode"),
         "hasWeightNode": has_link(node, "weightNode"),
     }

@@ -123,14 +123,7 @@ class CP77_OT_RefreshMetaRigParts(Operator):
         return {"FINISHED"}
 
 
-class _ObjectModeArmatureOperator:
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return context.mode == "OBJECT" and obj is not None and obj.type == "ARMATURE"
-
-
-class CP77_OT_EditMetaRigPart(_ObjectModeArmatureOperator, Operator):
+class CP77_OT_EditMetaRigPart(Operator):
     bl_idname = "cp77.edit_metarig_part"
     bl_label = "Edit MetaRig Part"
     bl_options = {"REGISTER", "UNDO"}
@@ -145,6 +138,11 @@ class CP77_OT_EditMetaRigPart(_ObjectModeArmatureOperator, Operator):
     )
     filepath: StringProperty(name="Rig Part", subtype="FILE_PATH")
     filter_glob: StringProperty(default="*.rig.json", options={"HIDDEN"})
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return context.mode == "OBJECT" and obj is not None and obj.type == "ARMATURE"
 
     def invoke(self, context, event):
         self._target = context.active_object
@@ -195,10 +193,15 @@ class CP77_OT_EditMetaRigPart(_ObjectModeArmatureOperator, Operator):
         )
 
 
-class CP77_OT_RemoveMetaRigPart(_ObjectModeArmatureOperator, Operator):
+class CP77_OT_RemoveMetaRigPart(Operator):
     bl_idname = "cp77.remove_metarig_part"
     bl_label = "Remove MetaRig Part"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return context.mode == "OBJECT" and obj is not None and obj.type == "ARMATURE"
 
     def execute(self, context):
         return execute_operation(

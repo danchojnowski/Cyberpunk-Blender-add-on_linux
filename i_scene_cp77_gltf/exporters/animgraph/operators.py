@@ -6,11 +6,10 @@ import bpy
 
 from ...animation.model.animgraph.constants import ANIMGRAPH_TREE_ID
 from ...assetio import animgraph_json as json_io
-from ...assetio.paths import animgraph_json_path
 from ...blender.context import node_editor_tree
 from ...core.log import get_logger
 from ...core.notifications import report
-from .nodes import runtime_node, encode_selected_node
+from .nodes import _runtime_node, encode_selected_node
 from .root import encode_rootchunk_summary, encode_wolvenkit_json
 from .tree_document import encode_active_tree
 from .variables import encode_root_variables
@@ -39,15 +38,6 @@ def _write_text_block(
         except (AttributeError, RuntimeError) as error:
             _LOG.debug("Clipboard unavailable: %s", error)
     return text
-
-
-class AnimGraphExportPath:
-    def check(self, context):
-        normalized = animgraph_json_path(self.filepath)
-        if normalized != self.filepath:
-            self.filepath = normalized
-            return True
-        return False
 
 
 class REDENGINE_OT_encode_rootchunk_json(bpy.types.Operator):
@@ -104,7 +94,7 @@ class REDENGINE_OT_encode_selected_node(bpy.types.Operator):
         return (
             node_editor_tree(context, ANIMGRAPH_TREE_ID) is not None
             and node is not None
-            and runtime_node(node)
+            and _runtime_node(node)
         )
 
     def execute(self, context):

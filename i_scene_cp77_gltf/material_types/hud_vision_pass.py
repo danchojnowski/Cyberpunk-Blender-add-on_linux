@@ -3,22 +3,21 @@ from .graph import grid_location, mix_color_socket
 from .hud_markers import VERTEX_COLOR_PRESENT_ATTRIBUTE
 from .mat_common import (
     MaterialTypeBase,
+    create_scene_time_value,
     get_or_build_node_group,
     new_labeled_node,
     param_color,
     param_texture_path,
     param_vector,
-    scene_time_socket,
 )
+
+# material_cache_identity is imported as this handler's material cache hook.
 from .overlay_common import (
     additive_surface,
     combine_vector,
     control,
     split_vector,
 )
-
-# material_cache_identity is imported as this handler's material cache hook.
-from .overlay_common import material_cache_identity as material_cache_identity
 
 
 def coverage_group():
@@ -225,7 +224,8 @@ class HUDVisionPass(MaterialTypeBase):
             )
         }
         depth = control(tree, data, "SceneDepthDelta", 1.0)
-        clock = scene_time_socket(tree.nodes, (-1400, -800), "Time")
+        clock = create_scene_time_value(tree, -1400, -800, "Time")
+        clock.name = "Time"
         transform = param_vector(data, "TextureTilingAndSpeed", (1.0, 1.0, 0.0, 0.0))
         uv = new_labeled_node(
             tree.nodes, "ShaderNodeTexCoord", "Overlay Coordinates", (-1400, 800)
@@ -239,7 +239,7 @@ class HUDVisionPass(MaterialTypeBase):
                 tree.nodes,
                 tree.links,
                 "MULTIPLY",
-                clock,
+                clock.outputs["Value"],
                 rate,
                 name="UV Time " + axis,
                 location=grid_location(tree, (200, 160)),

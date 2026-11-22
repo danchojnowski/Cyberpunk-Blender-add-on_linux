@@ -6,7 +6,6 @@ import time
 
 import bpy
 
-from ....assetio.sector_model import PROXY_PHASE, STANDARD_PHASE
 from ....assetio.values import cname_text, nested_value
 from ....bartmoss.matrix import flatten_matrix
 from ....blender.naming import fit_id_name
@@ -18,6 +17,7 @@ from ..context import (
     FoliageResourceError,
     SectorContentError,
 )
+from ..model import PROXY_PHASE, STANDARD_PHASE
 from ..objects import (
     animate_rotation_root,
     assign_id_properties,
@@ -28,12 +28,6 @@ from ..options import ENTITY_NODE_TYPES, PROXY_NODE_TYPES
 from ..registry import NODE_HANDLERS
 
 _LOG = get_logger(__name__)
-
-_ENTITY_INSTANCE_COLOR = (0.567942, 0.0247339, 0.600028, 1)
-_INSTANCED_MESH_COLOR = (0.785188, 0.409408, 0.0430124, 1)
-_INSTANCED_OCCLUDER_COLOR = (0.35, 0.15, 0.05, 1.0)
-_INSTANCED_DESTRUCTIBLE_COLOR = (0.3, 0.3, 0.3, 1)
-_FOLIAGE_INSTANCE_COLOR = (0.0, 1.0, 0.0, 1)
 
 STANDARD_COPIED_MESH_NODE_TYPES = frozenset(
     {
@@ -87,7 +81,7 @@ class EntityPlacementHandler:
                     entity_master.collection,
                     instance_name,
                     node_matrix,
-                    color=_ENTITY_INSTANCE_COLOR,
+                    color=(0.567942, 0.0247339, 0.600028, 1),
                     hide_armatures=True,
                 )
             )
@@ -305,7 +299,7 @@ class InstancedMeshPlacementHandler:
                     group,
                     collection,
                     matrix,
-                    color=_INSTANCED_MESH_COLOR,
+                    color=(0.785188, 0.409408, 0.0430124, 1),
                 )
                 context.operations.assign_custom_properties(
                     instance,
@@ -379,7 +373,7 @@ class InstancedOccluderPlacementHandler:
                 group,
                 collection,
                 matrix,
-                color=_INSTANCED_OCCLUDER_COLOR,
+                color=(0.35, 0.15, 0.05, 1.0),
             )
             context.operations.assign_custom_properties(
                 instance,
@@ -451,7 +445,7 @@ class InstancedDestructiblePlacementHandler:
                     group,
                     collection,
                     final_matrix,
-                    color=_INSTANCED_DESTRUCTIBLE_COLOR,
+                    color=(0.3, 0.3, 0.3, 1),
                 )
                 context.operations.assign_custom_properties(
                     instance,
@@ -537,7 +531,7 @@ class FoliagePlacementHandler:
                     group,
                     collection,
                     final_matrix,
-                    color=_FOLIAGE_INSTANCE_COLOR,
+                    color=(0.0, 1.0, 0.0, 1),
                 )
                 context.operations.assign_custom_properties(
                     instance,

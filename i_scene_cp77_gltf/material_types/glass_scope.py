@@ -68,7 +68,7 @@ class GlassScope(MaterialTypeBase):
         data = Data if isinstance(Data, dict) else {}
         tree = Mat.node_tree
         nodes, links = tree.nodes, tree.links
-        principled = shader_nodes.principled_bsdf(nodes)
+        principled = nodes.get("Principled BSDF")
         if principled is None:
             return
 

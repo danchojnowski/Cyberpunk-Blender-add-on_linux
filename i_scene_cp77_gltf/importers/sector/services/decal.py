@@ -11,7 +11,7 @@ import numpy as np
 from mathutils import Matrix
 
 from ....assetio.documents import file_identity
-from ....assetio.paths import depot_path, local_path_key
+from ....assetio.paths import local_path_key
 from ....blender.decal_overrides import (
     apply_override_values,
     apply_sector_alpha,
@@ -23,18 +23,17 @@ from ....blender.identity import rna_identity, rna_is_live
 from ....blender.naming import fit_id_name
 from ....blender.shader_nodes import outputs_detached, remove_unused_shading
 from ....blender.transactions import track_created_datablock
-from ....core.log import debug_exception, get_logger, is_enabled, log_once
+from ....core.log import get_logger, is_enabled, log_once
 from ....material_types.decal_composite import PROJECTION_COVERAGE_ATTRIBUTE
 from ....materials.blender.builder import MaterialBuilder
 from ....materials.blender.bulk import bulk_material_import_scope
 from ....materials.blender.cache import (
-    MATERIAL_CACHE,
-    cache_material,
-    lookup_cached,
-    record_prototype_hit,
+    _MATERIAL_CACHE,
+    _cache_material,
+    _lookup_cached,
+    _record_prototype_hit,
     rename_cached_material,
 )
-from ....materials.blender.images import DEFAULT_IMAGE_FORMAT
 from ....materials.blender.profiling import (
     detailed_material_profiling_requested,
     finish_material_profiling,
@@ -43,11 +42,11 @@ from ....materials.blender.profiling import (
 )
 from ....materials.blender.registry import DECAL_REGISTRY
 from ....materials.parser import base_material_path
+from ...common.paths import depot_path
 from ..objects import new_empty
 from .decal_projection import PendingDecalProjection, project_pending_decals
 
 _LOG = get_logger(__name__)
-_FALLBACK_DECAL_COLOR = (1.0, 0.905, 0.062, 1.0)
 
 
 @dataclass(slots=True, frozen=True)
@@ -373,20 +372,22 @@ class DecalService:
             return None, None
         root = builder.obj["Data"]["RootChunk"]
         signature = builder.decal_signature(root, cache_identity=identity)
-        if lookup_cached(MATERIAL_CACHE, signature) is not None:
+        if _lookup_cached(_MATERIAL_CACHE, signature) is not None:
             return None, None
         prototype, state, added_nodes = entry
         material = track_created_datablock("materials", prototype.copy())
         try:
             material.name = builder.archive_material_name()
             restore_graph_state(material.node_tree, state, added_nodes)
-            builder.set_material_source_properties(material, {}, include_template=False)
-            cache_material(signature, signature, material, cloned=True)
-            record_prototype_hit()
+            builder._set_material_source_properties(
+                material, {}, include_template=False
+            )
+            _cache_material(signature, signature, material, cloned=True)
+            _record_prototype_hit()
             self.stats["graph_reuses"] += 1
             return material, state
         except Exception:
-            builder.remove_failed_material(material)
+            builder._remove_failed_material(material)
             raise
 
     def cache_stats(self):
@@ -535,7 +536,7 @@ class DecalService:
             builder = MaterialBuilder(
                 document,
                 self.session.raw_root,
-                DEFAULT_IMAGE_FORMAT,
+                "png",
                 self.session.raw_root,
             )
             builder_identity = self._builder_cache_identity(
@@ -606,7 +607,6 @@ class DecalService:
                 status="BUILT",
             )
         except Exception as error:
-            debug_exception(_LOG, "Decal material %s failed to build", material_path)
             return DecalMaterialResult(
                 material=None,
                 material_path=material_path,
@@ -620,7 +620,7 @@ class DecalService:
     @staticmethod
     def fallback_wire(plane):
         plane.display_type = "WIRE"
-        plane.color = _FALLBACK_DECAL_COLOR
+        plane.color = (1.0, 0.905, 0.062, 1.0)
         plane.show_wire = True
         plane.display.show_shadows = False
 
@@ -750,7 +750,6 @@ class DecalService:
             collection,
             pending,
             self.composite_material_cache,
-            context=self.session.blender_context,
             output_collection=output_collection,
         )
         summary["projectors"] = projector_count

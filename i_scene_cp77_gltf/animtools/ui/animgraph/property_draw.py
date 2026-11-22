@@ -3,7 +3,6 @@ import json
 from ....blender.animgraph import presenters, sm_edit, variables
 from ....blender.animgraph.property_ui import draw_property_row
 from ....core.log import get_logger, log_once
-from .node_widgets import draw_bone_property
 from .variable_widgets import draw_variable_value
 
 _LOG = get_logger(__name__)
@@ -92,7 +91,4 @@ def draw_node(node, context, layout):
     box = column.box()
     box.label(text="REDengine Properties", icon="PROPERTIES")
     for index, item in shown:
-        if item.value_kind == "TRANSFORM_INDEX":
-            draw_bone_property(node, box, item, "string_value", item.label or item.key)
-        else:
-            draw_property_row(node, box, item, index)
+        draw_property_row(node, box, item, index)

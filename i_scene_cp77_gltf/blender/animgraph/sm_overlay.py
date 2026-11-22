@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import bpy
 
-from ...animation.model.animgraph.constants import ANIMGRAPH_TREE_ID
 from ...core.log import debug_exception, get_logger, log_once
-from ..gpu_overlay import line_drawing
 from . import sm_records, sm_sockets
 from .sm_sockets import IN_NAME, IN_SOCKET_ID, ROW_SOCKET_ID
+from .tree import REDengine_AnimGraphTree
 
 PALETTE = (
     (0.90, 0.62, 0.00),
@@ -357,7 +356,7 @@ def _scan(tree, container) -> tuple:
 
 
 def _build(sm_tree, space=None) -> tuple:
-    """(segments, tree scale) for sm_tree"""
+    """(segments, tree scale) for sm_tree (see wire_segments)"""
     if sm_tree is None:
         return [], 1.0
     try:
@@ -411,13 +410,21 @@ def _build(sm_tree, space=None) -> tuple:
     return segments, scale
 
 
+def wire_segments(sm_tree, space=None) -> list:
+    """One (start, end, rgba, width) per transition that has a distinct, known target"""
+    return _build(sm_tree, space)[0]
+
+
 def _current_tree():
     """The AnimGraph tree shown by the node editor being drawn, else None"""
     space = getattr(bpy.context, "space_data", None)
     if space is None or getattr(space, "type", "") != "NODE_EDITOR":
         return None
     tree = getattr(space, "edit_tree", None)
-    if tree is None or getattr(tree, "bl_idname", "") != ANIMGRAPH_TREE_ID:
+    if (
+        tree is None
+        or getattr(tree, "bl_idname", "") != REDengine_AnimGraphTree.bl_idname
+    ):
         return None
     return tree
 
@@ -429,7 +436,9 @@ def _draw_batches(segments, viewport, scale: float) -> None:
     shader = gpu.shader.from_builtin("POLYLINE_SMOOTH_COLOR")
     shader.bind()
     shader.uniform_float("viewportSize", viewport)
-    with line_drawing():
+    previous_blend = gpu.state.blend_get()
+    gpu.state.blend_set("ALPHA")
+    try:
         # One batch of independent line pairs per width for opaque wires. Translucent
         # wires are drawn as their own strip so overlapping joints do not darken them.
         opaque = {}
@@ -456,6 +465,8 @@ def _draw_batches(segments, viewport, scale: float) -> None:
             batch_for_shader(
                 shader, "LINE_STRIP", {"pos": points, "color": [colour] * len(points)}
             ).draw(shader)
+    finally:
+        gpu.state.blend_set(previous_blend)
 
 
 def draw_callback() -> None:

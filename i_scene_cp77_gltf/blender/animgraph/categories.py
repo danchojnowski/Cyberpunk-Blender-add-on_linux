@@ -111,8 +111,6 @@ CONSTRAINT_OR_IK_TYPES = frozenset(
         "AimConstraint",
         "TwistConstraint",
         "TranslationLimit",
-        "ConeLimit",
-        "SuspensionLimit",
         "DirectConnConstraint",
         "FloatTrackDirectConnConstraint",
         "Ik2",
@@ -120,18 +118,14 @@ CONSTRAINT_OR_IK_TYPES = frozenset(
         "AddIkRequest",
         "AddSnapToTerrainIkRequest",
         "ReadIkRequest",
-        "GenerateIkAnimFeatureData",
-        "HumanIk",
         "LookAt",
         "LookAtController",
         "LookAtApplyVehicleRestrictions",
-        "LookAtPose360",
         "EyesLookAt",
         "EyesTracksLookAt",
-        "FootStepAdjuster",
+        "FootstepAdjuster",
         "FootStepScaling",
         "FloorIk",
-        "FloorIkBase",
     }
 )
 
@@ -141,7 +135,7 @@ def node_category(short: str) -> str:
         return "container"
     if short in ("Entry", "AnyState", "RootOutput"):
         return "transition"
-    if short in CONSTRAINT_OR_IK_TYPES or "Constraint" in short:
+    if short in CONSTRAINT_OR_IK_TYPES or short.endswith("Constraint"):
         return "constraint"
     if short.startswith("Stack"):
         return "stack"

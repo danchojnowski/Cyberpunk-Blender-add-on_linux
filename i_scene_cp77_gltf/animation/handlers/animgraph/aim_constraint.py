@@ -13,10 +13,9 @@ class AimConstraintHandler(PoseOpHandler):
         "animAnimNode_AimConstraint_ObjectUp",
         "animAnimNode_AimConstraint_ObjectRotationUp",
     )
-    bone_fields = ("targetTransform", "transformIndex")
 
     def map_data(self, context, program_node, node_type, data):
-        data = super().map_data(context, program_node, node_type, data)
+        resolve_bones(context, data, ("targetTransform", "transformIndex"))
         if node_type == "animAnimNode_AimConstraint":
             up = dict(data.get("upTransform") or {})
             resolve_bones(
@@ -63,7 +62,7 @@ class AimConstraintHandler(PoseOpHandler):
                 "animAnimNode_AimConstraint_ObjectUp",
                 "animAnimNode_AimConstraint_ObjectRotationUp",
             }
-            else context.reference_model_pose(op.child)
+            else context._reference_model_pose(op.child)
         )
         evaluation = evaluate_aim_constraint(
             op.pose,

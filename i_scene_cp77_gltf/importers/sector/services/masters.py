@@ -14,13 +14,12 @@ from ....assetio.paths import (
     depot_to_local_fragment,
     local_path_key,
 )
-from ....assetio.sector_model import PROXY_PHASE
 from ....assetio.values import cname_text
 from ....blender.naming import fit_id_name
 from ....blender.physics.actors import unregister_actors
 from ....blender.transactions import child_import_savepoint, rollback_import_child
 from ....core.log import LogLimiter, debug_exception, get_logger, log_once
-from ....entity.domain.entity_data import (
+from ...common.entity_data import (
     resolve_ent_appearance_alias,
     resolve_requested_appearance_name,
 )
@@ -29,6 +28,7 @@ from ...common.progress import NO_PROGRESS
 from ...entity.execution import import_entity
 from ...entity.options import EntityImportRequest
 from ..context import SectorContentError
+from ..model import PROXY_PHASE
 
 _LOG = get_logger(__name__)
 
@@ -779,9 +779,7 @@ class EntityMasterService:
         master_options.tag(collection)
         if master_options.colliders:
             # Masters are only copied: the PhysX tools work on the placed copies.
-            unregister_actors(
-                tuple(collection.all_objects), self.session.blender_context
-            )
+            unregister_actors(tuple(collection.all_objects), bpy.context)
         collection["cp77_sector_entity_master_signature"] = signature
         self._invalidate_scene_index()
         return collection

@@ -233,20 +233,6 @@ def inactive_graph_inputs(data: Mapping[str, Any]) -> dict[tuple[str, str], Any]
     return values
 
 
-def _to_sphere(point, center, inverse):
-    difference = tuple(a - b for a, b in zip(point, center))
-    return unit_direction(rotate_vector_scalar_xyzw(inverse, difference)), math.sqrt(
-        sum(v * v for v in difference)
-    )
-
-
-def _to_model(value, center, rotation, distance):
-    rotated = rotate_vector_scalar_xyzw(
-        rotation, tuple(v * distance for v in unit_direction(value))
-    )
-    return tuple(a + b for a, b in zip(center, rotated))
-
-
 def advance_controller(
     state: LookAtControllerState,
     data: Mapping[str, Any],
@@ -318,9 +304,14 @@ def advance_controller(
         )
         center, rotation = sphere.translation, sphere.rotation_xyzw
         inverse = (-rotation[0], -rotation[1], -rotation[2], rotation[3])
-        default_direction, default_distance = _to_sphere(
-            default.translation, center, inverse
-        )
+
+        def to_sphere(point):
+            difference = tuple(a - b for a, b in zip(point, center))
+            return unit_direction(
+                rotate_vector_scalar_xyzw(inverse, difference)
+            ), math.sqrt(sum(v * v for v in difference))
+
+        default_direction, default_distance = to_sphere(default.translation)
         part = state.parts.setdefault(name, PartState())
         if not part.initialized:
             part.direction, part.distance = default_direction, default_distance
@@ -339,7 +330,7 @@ def advance_controller(
                 key: value for key, value in part.following.items() if key in live_keys
             }
             for key, candidate in candidates:
-                direction, distance = _to_sphere(candidate.target, center, inverse)
+                direction, distance = to_sphere(candidate.target)
                 prior = part.following.get(key)
                 if prior is not None:
                     old, behind, delay = prior
@@ -448,11 +439,16 @@ def advance_controller(
             )
         enable = max(0.0, min(1.0, enable))
         direction = interpolate_direction(default_direction, part.direction, enable)
+
+        def to_model(value):
+            rotated = rotate_vector_scalar_xyzw(
+                rotation, tuple(v * part.distance for v in unit_direction(value))
+            )
+            return tuple(a + b for a, b in zip(center, rotated))
+
         output[(name, "isEnabled")] = bool(candidates) or part.active_weight > 0
-        output[(name, "target")] = _to_model(direction, center, rotation, part.distance)
-        output[(name, "rawTarget")] = _to_model(
-            part.direction, center, rotation, part.distance
-        )
+        output[(name, "target")] = to_model(direction)
+        output[(name, "rawTarget")] = to_model(part.direction)
         output[(name, "distance")] = part.distance
         output[(name, "suppress")] = part.suppress * enable
         output[(name, "mode")] = part.mode

@@ -16,19 +16,10 @@ from bpy.props import (
 from ..bartmoss.vehicle import STANDARD_GRAVITY
 from ..blender.physics.objects import update_collision_bits
 from ..core.log import debug_exception, get_logger, log_once
-from ..core.notifications import report
 from ..physics.model.collision_layers import DEFAULT_PRESET_INDEX, get_preset_items
 from ..physics.model.materials import physics_material_enum_items
+from ..physics.runtime.bridge import require_bridge
 from .runtime.dangle.rigs import clear_dangle_rigs
-from .runtime.vehicle_camera import snap_vehicle_camera
-from .runtime.vehicle_guides import tag_guides_redraw
-from .runtime.vehicle_preview import queue_vehicle_live_update
-from .services.dangles.selection import (
-    on_active_chain_update,
-    on_active_particle_update,
-)
-from .services.scene import update_gravity
-from .services.vehicle import set_vehicle_game_camera
 from .services.vehicle_resolver import base_vehicle_choices, record_override_choices
 
 _LOG = get_logger(__name__)
@@ -94,10 +85,14 @@ def _dangle_rig_changed(_self, _context):
 
 
 def _active_chain_update(self, context):
+    from .services.dangles.selection import on_active_chain_update
+
     on_active_chain_update(self, context)
 
 
 def _active_particle_update(self, context):
+    from .services.dangles.selection import on_active_particle_update
+
     on_active_particle_update(self, context)
 
 
@@ -784,10 +779,12 @@ def clear_property_item_caches():
 
 def update_gravity_cb(self, context):
     if self.is_initialized:
-        result = update_gravity(context)
-        if not result.ok:
+        try:
+            _bridge = require_bridge()
+            g = self.gravity
+            _bridge.set_gravity(g[0], g[1], g[2])
+        except (ImportError, RuntimeError):
             self.is_initialized = False
-            report(None, "WARNING", result.message, error=result.error, logger=_LOG)
 
 
 def get_armature_items(self, context):
@@ -1091,18 +1088,27 @@ def update_vehicle_authoring(self, context):
 
 
 def update_vehicle_guides(self, context):
+    from .runtime.vehicle_guides import tag_guides_redraw
+
     tag_guides_redraw()
 
 
 def update_vehicle_game_camera(self, context):
+    from .runtime.vehicle_camera import start_vehicle_camera, stop_vehicle_camera
+
     scene = getattr(context, "scene", None)
     if scene is None:
         return
-    if not set_vehicle_game_camera(scene, self.game_camera) and self.game_camera:
-        self.game_camera = False
+    if self.game_camera:
+        if not start_vehicle_camera(scene):
+            self.game_camera = False
+    else:
+        stop_vehicle_camera(scene)
 
 
 def update_vehicle_game_camera_preset(self, context):
+    from .runtime.vehicle_camera import snap_vehicle_camera
+
     scene = getattr(context, "scene", None)
     physx = getattr(scene, "physx", None) if scene is not None else None
     # A running simulation eases the boom and pitch to the new preset; a paused one jumps to it.
@@ -1121,6 +1127,8 @@ def _queue_vehicle_live_change(self, context, *, rebuild):
     vehicle = getattr(scene, "physx_vehicle", None) or self
     _stale_vehicle_validation(vehicle)
     try:
+        from .runtime.vehicle_preview import queue_vehicle_live_update
+
         queue_vehicle_live_update(scene, rebuild=rebuild)
     except Exception as error:
         debug_exception(_LOG, "Could not queue the live vehicle update")

@@ -6,7 +6,6 @@ import bpy
 
 from ...animation.model.animgraph.handles import normalized_source_handle
 from ...core.log import get_logger, log_once
-from ..gpu_overlay import line_drawing
 from . import sm_overlay
 from .rig_binding import binding_tree
 from .tree import REDengine_AnimGraphTree
@@ -205,7 +204,9 @@ def _draw(fills, outlines, viewport) -> None:
     import gpu
     from gpu_extras.batch import batch_for_shader
 
-    with line_drawing():
+    previous_blend = gpu.state.blend_get()
+    gpu.state.blend_set("ALPHA")
+    try:
         if fills:
             positions, colours = [], []
             for (x0, y0, x1, y1), colour in fills:
@@ -240,6 +241,8 @@ def _draw(fills, outlines, viewport) -> None:
                 batch_for_shader(
                     shader, "LINES", {"pos": positions, "color": colours}
                 ).draw(shader)
+    finally:
+        gpu.state.blend_set(previous_blend)
 
 
 def draw_callback() -> None:

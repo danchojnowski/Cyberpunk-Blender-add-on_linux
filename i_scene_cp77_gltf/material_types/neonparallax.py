@@ -69,29 +69,29 @@ class NeonParallax(MaterialTypeBase):
 
     def _load_images(self, data):
         return {
-            "BaseColor": self.load_relative_image(
+            "BaseColor": self._load_relative_image(
                 param_texture_path(data, "BaseColor")
                 or self.texture_defaults["BaseColor"],
                 error_label="neon parallax base color",
             ),
-            "GradientMap": self.load_relative_image(
+            "GradientMap": self._load_relative_image(
                 param_texture_path(data, "GradientMap")
                 or self.texture_defaults["GradientMap"],
                 error_label="neon parallax gradient",
             ),
-            "Metalness": self.load_relative_image(
+            "Metalness": self._load_relative_image(
                 param_texture_path(data, "Metalness")
                 or self.texture_defaults["Metalness"],
                 non_color=True,
                 error_label="neon parallax metalness",
             ),
-            "Roughness": self.load_relative_image(
+            "Roughness": self._load_relative_image(
                 param_texture_path(data, "Roughness")
                 or self.texture_defaults["Roughness"],
                 non_color=True,
                 error_label="neon parallax roughness",
             ),
-            "Emissive": self.load_relative_image(
+            "Emissive": self._load_relative_image(
                 param_texture_path(data, "Emissive")
                 or self.texture_defaults["Emissive"],
                 non_color=True,

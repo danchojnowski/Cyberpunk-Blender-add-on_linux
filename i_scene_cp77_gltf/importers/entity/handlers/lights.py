@@ -5,10 +5,7 @@ import math
 import bpy
 from mathutils import Matrix
 
-from ....assetio.paths import depot_path
 from ....assetio.values import color_bytes, field_float
-from ....blender.entity.transforms import resolve_handle_data
-from ....blender.light_environment import register_environment_lights
 from ....blender.light_preview import (
     BASE_ENERGY_KEY,
     PREVIEW_AVAILABLE_KEY,
@@ -23,9 +20,7 @@ from ....blender.light_preview import (
     write_zone_light,
 )
 from ....blender.transactions import track_created_datablock
-from ....blender.vehicle_light_preview import capture_vehicle_light_base
 from ....core.log import get_logger
-from ....entity.domain.entity_data import component_name
 from ....entity.domain.light_representation import (
     light_representation,
     linear_color,
@@ -40,16 +35,19 @@ from ....entity.domain.lights import (
     is_destroyed_vehicle_appearance,
     light_starts_off,
 )
-from ....entity.model.component_types import LIGHT_COMPONENT_TYPES
 from ....redSpace.transforms import red_light_local_to_blender_light
+from ...common.entity_data import component_name
+from ...common.light_environment import register_environment_lights
 from ...common.light_probe_participation import apply_probe_capture_participation
-from ..policy import MESH_COMPONENT_TYPES, is_component_enabled
+from ...common.paths import depot_path
+from ...common.vehicle_light_preview import capture_vehicle_light_base
+from ..policy import LIGHT_COMPONENT_TYPES, MESH_COMPONENT_TYPES, is_component_enabled
 from ..registry import EntityComponentHandlerRegistry
+from ..transforms import resolve_handle_data
 
 _LOG = get_logger(__name__)
 _UNSET = object()
 _LIGHT_DIRECTION_CORRECTION = Matrix(red_light_local_to_blender_light())
-_LIGHT_CHANNEL_COLOR = (0.005, 0.79105, 1, 1)
 
 
 def light_channel_geometry(component, shape_lookup=None):
@@ -367,7 +365,7 @@ def create_light_channel_mesh(component, shape_lookup):
 
     obj = track_created_datablock("objects", bpy.data.objects.new(name, mesh_data))
     obj.display_type = "WIRE"
-    obj.color = _LIGHT_CHANNEL_COLOR
+    obj.color = (0.005, 0.79105, 1, 1)
     obj.show_wire = True
     obj.show_in_front = True
     obj.display.show_shadows = False

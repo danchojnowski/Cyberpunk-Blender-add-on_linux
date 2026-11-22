@@ -13,14 +13,13 @@ from ...bartmoss.scalar import (
     srgb_channel_to_linear,
 )
 from ...blender import shader_nodes
-from ...blender.transactions import track_created_datablock
 from ...core.log import get_logger, log_once
 from ...core.notifications import report
+from ...material_types.graph import add_bundle_items
 from ...material_types.mat_common import find_input
 from ...material_types.multilayered import LAYER_BUNDLE_ITEMS
-from ...material_types.normal_math import vector_normal_z_node
-from ...materials.blender.layout import add_bundle_items
 from ...materials.blender.nodes import (
+    CreateCalculateVecNormalZ,
     configure_tangent_normal_map,
 )
 from ..common.access import (
@@ -175,7 +174,6 @@ def _mask_value_group():
     if group is not None:
         return group
     group = bpy.data.node_groups.new(name, "ShaderNodeTree")
-    track_created_datablock("node_groups", group)
     group.interface.new_socket(
         name="Active Mask", socket_type="NodeSocketFloat", in_out="INPUT"
     )
@@ -273,7 +271,6 @@ def _mask_diagnostic_group():
         return group
 
     group = bpy.data.node_groups.new(_MASK_DIAGNOSTIC_GROUP, "ShaderNodeTree")
-    track_created_datablock("node_groups", group)
     group.interface.new_socket(
         name="Mode", socket_type="NodeSocketFloat", in_out="INPUT"
     )
@@ -489,7 +486,6 @@ def _template_preview_group():
         return group
 
     group = bpy.data.node_groups.new(_TEMPLATE_PREVIEW_GROUP, "ShaderNodeTree")
-    track_created_datablock("node_groups", group)
     group.interface.new_socket(
         name="Layer", socket_type="NodeSocketBundle", in_out="INPUT"
     )
@@ -510,8 +506,8 @@ def _template_preview_group():
     add_bundle_items(separate, LAYER_BUNDLE_ITEMS)
     links.new(group_input.outputs["Layer"], separate.inputs["Bundle"])
 
-    rebuild = vector_normal_z_node(
-        group, (-260, -220), "CP77 MLTemplate Preview Normal"
+    rebuild = CreateCalculateVecNormalZ(
+        group, -260, -220, "CP77 MLTemplate Preview Normal"
     )
     normal_map = configure_tangent_normal_map(nodes.new("ShaderNodeNormalMap"))
     normal_map.location = (0, -220)

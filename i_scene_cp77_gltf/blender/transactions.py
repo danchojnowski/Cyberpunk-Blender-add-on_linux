@@ -9,9 +9,7 @@ from functools import wraps
 import bpy
 
 from ..core.log import debug_exception, get_logger, log_once
-from .context import BlenderContextSnapshot, safe_mode_switch
 from .identity import rna_identity, rna_is_live
-from .operator_results import OperationResult
 
 _ACTIVE_IMPORT_TRANSACTION = ContextVar("cp77_active_import_transaction", default=None)
 _LOG = get_logger(__name__)
@@ -503,7 +501,7 @@ def _force_object_mode():
     if context is None or getattr(context, "mode", "OBJECT") == "OBJECT":
         return
     try:
-        safe_mode_switch("OBJECT")
+        bpy.ops.object.mode_set(mode="OBJECT")
     except (AttributeError, RuntimeError, TypeError) as error:
         log_once(
             _LOG,
@@ -677,111 +675,6 @@ def track_object_state(obj, *, label="object state"):
     return transaction
 
 
-def track_mesh_object(obj, *, label="mesh object"):
-    transaction = current_import_transaction()
-    if transaction is None or obj is None or obj.type != "MESH":
-        return transaction
-    matrix = obj.matrix_basis.copy()
-
-    def restore_transform():
-        if rna_is_live(obj):
-            obj.matrix_basis = matrix
-
-    transaction.track_mutation(
-        ("object_transform", rna_identity(obj)), restore_transform, label=label
-    )
-    mesh = obj.data
-    key = ("mesh_data", rna_identity(mesh))
-    if transaction.tracks_mutation(key):
-        return transaction
-    name = mesh.name
-    backup = mesh.copy()
-
-    def restore_mesh():
-        if rna_is_live(mesh):
-            mesh.user_remap(backup)
-            bpy.data.meshes.remove(mesh)
-        backup.name = name
-
-    def discard_backup():
-        if rna_is_live(backup):
-            bpy.data.meshes.remove(backup)
-
-    transaction.track_mutation(key, restore_mesh, label=label)
-    transaction.defer_commit_cleanup(discard_backup)
-    return transaction
-
-
-def track_new_modifier(obj, modifier, *, label="modifier"):
-    name = modifier.name
-
-    def restore():
-        added = obj.modifiers.get(name) if rna_is_live(obj) else None
-        if added is not None:
-            obj.modifiers.remove(added)
-
-    return track_mutation(("modifier", rna_identity(obj), name), restore, label=label)
-
-
-def _reachable_node_groups(tree):
-    found, seen, pending = [], set(), [tree]
-    while pending:
-        current = pending.pop(0)
-        for node in current.nodes:
-            group = getattr(node, "node_tree", None)
-            if group is not None and rna_identity(group) not in seen:
-                seen.add(rna_identity(group))
-                found.append(group)
-                pending.append(group)
-    return found
-
-
-def track_node_tree(tree, *, before_restore=None, label="node tree"):
-    transaction = current_import_transaction()
-    if transaction is None or tree is None:
-        return
-    key = ("node_tree", rna_identity(tree))
-    if transaction.tracks_mutation(key):
-        return
-    snapshot = tree.copy()
-    transaction.keep_datablock("node_groups", snapshot)
-    name = tree.name
-
-    def restore():
-        if before_restore is not None:
-            before_restore()
-        if rna_is_live(tree):
-            tree.user_remap(snapshot)
-            bpy.data.node_groups.remove(tree)
-        snapshot.name = name
-
-    def drop_snapshot():
-        if not rna_is_live(snapshot):
-            return
-        reachable = _reachable_node_groups(snapshot)
-        bpy.data.node_groups.remove(snapshot)
-        for group in reachable:
-            if rna_is_live(group) and group.users == 0:
-                bpy.data.node_groups.remove(group)
-
-    transaction.track_mutation(key, restore, label=label)
-    transaction.defer_commit_cleanup(drop_snapshot)
-
-
-def remove_datablock_on_commit(collection_name, value):
-    transaction = current_import_transaction()
-    collection = getattr(bpy.data, collection_name)
-    if transaction is None:
-        collection.remove(value)
-        return
-
-    def remove():
-        if rna_is_live(value):
-            collection.remove(value)
-
-    transaction.defer_commit_cleanup(remove)
-
-
 def track_created_since(snapshot):
     """Track every datablock missing from a snapshot_datablocks() result as created"""
     transaction = current_import_transaction()
@@ -800,7 +693,7 @@ def track_created_since(snapshot):
     return tuple(created)
 
 
-def remove_datablock(collection_name, value):
+def _remove_datablock(collection_name, value):
     if value is None:
         return
     collection = getattr(bpy.data, collection_name, None)
@@ -809,7 +702,12 @@ def remove_datablock(collection_name, value):
     try:
         collection.remove(value, do_unlink=True)
     except TypeError:
-        collection.remove(value)
+        try:
+            collection.remove(value)
+        except (ReferenceError, RuntimeError, TypeError, ValueError):
+            pass
+    except (ReferenceError, RuntimeError, ValueError):
+        pass
 
 
 def _remove_datablocks(entries):
@@ -825,7 +723,7 @@ def _remove_datablocks(entries):
     for name, value in live:
         if rna_is_live(value):
             try:
-                remove_datablock(name, value)
+                _remove_datablock(name, value)
             except Exception as error:
                 debug_exception(
                     _LOG,
@@ -878,7 +776,7 @@ def _run_rollback_hooks(removed_types):
     for name, hook in tuple(_ROLLBACK_HOOKS.items()):
         try:
             hook(frozenset(removed_types))
-        except Exception:
+        except RuntimeError:
             debug_exception(_LOG, "Rollback hook %s failed", name)
 
 
@@ -928,13 +826,6 @@ class DatablockImportTransaction:
         self._mutation_keys.add(key)
         self._mutations.append(_MutationEntry(key, str(label), restore, verify))
 
-    def tracks_mutation(self, key):
-        return key in self._mutation_keys
-
-    def keep_datablock(self, collection_name, value):
-        kept = self._snapshot.get(collection_name, frozenset()) | {rna_identity(value)}
-        self._snapshot = {**self._snapshot, collection_name: kept}
-
     def defer_commit_cleanup(self, callback):
         """Release superseded data only after rollback no longer needs it"""
         if not self._closed:
@@ -977,14 +868,18 @@ class DatablockImportTransaction:
         return discovered
 
     def rollback_to(self, savepoint):
-        if not isinstance(savepoint, ImportSavepoint):
-            raise TypeError(
-                f"rollback_to takes an ImportSavepoint, not {type(savepoint).__name__}"
-            )
         if self._closed:
             return RollbackReport(failures=(("transaction", "closed"),))
-        target_created = max(0, min(savepoint.created_count, len(self._created)))
-        target_mutations = max(0, min(savepoint.mutation_count, len(self._mutations)))
+        target_created = (
+            savepoint.created_count
+            if isinstance(savepoint, ImportSavepoint)
+            else int(savepoint)
+        )
+        target_mutations = (
+            savepoint.mutation_count if isinstance(savepoint, ImportSavepoint) else 0
+        )
+        target_created = max(0, min(target_created, len(self._created)))
+        target_mutations = max(0, min(target_mutations, len(self._mutations)))
         failures = []
         restored = 0
         removed = 0
@@ -1069,15 +964,13 @@ class DatablockImportTransaction:
     def commit(self):
         self._run_finalizers()
         for callback in self._commit_cleanup:
-            try:
-                callback()
-            except Exception as error:
-                _LOG.exception("Import commit cleanup failed: %s", error)
+            callback()
         self._commit_cleanup.clear()
         self._created.clear()
         self._created_values.clear()
         self._mutations.clear()
         self._mutation_keys.clear()
+        self._commit_cleanup.clear()
         self._closed = True
 
 
@@ -1086,6 +979,8 @@ class BlenderImportTransaction(DatablockImportTransaction):
         super().__init__()
         self._context_snapshot = None
         if restore_context:
+            from .context import BlenderContextSnapshot
+
             self._context_snapshot = BlenderContextSnapshot().store()
         if capture_existing_state:
             self._collections = tuple(
@@ -1127,18 +1022,9 @@ class BlenderImportTransaction(DatablockImportTransaction):
             return RollbackReport()
         _force_object_mode()
         report = super().rollback_to(ImportSavepoint(0, 0))
-        steps = [("existing state", self._restore_existing_state)]
+        self._restore_existing_state()
         if self._context_snapshot is not None:
-            steps.append(("context", self._context_snapshot.restore))
-        failures = []
-        for label, restore in steps:
-            try:
-                restore()
-            except Exception as error:
-                _LOG.warning(
-                    "Import rollback could not restore the %s", label, exc_info=True
-                )
-                failures.append((label, str(error)))
+            self._context_snapshot.restore()
         self._created.clear()
         self._created_values.clear()
         self._mutations.clear()
@@ -1146,14 +1032,7 @@ class BlenderImportTransaction(DatablockImportTransaction):
         self._commit_cleanup.clear()
         self._finalizers.clear()
         self._closed = True
-        if not failures:
-            return report
-        return RollbackReport(
-            report.removed,
-            report.restored,
-            report.failures + tuple(failures),
-            report.leaked,
-        )
+        return report
 
     def _restore_existing_state(self):
         for state in (*self._collections, *self._scene_roots):
@@ -1256,6 +1135,8 @@ class BlenderImportTransaction(DatablockImportTransaction):
 
 
 def _failed(result) -> bool:
+    from .operator_results import OperationResult
+
     return isinstance(result, OperationResult) and not result.ok
 
 

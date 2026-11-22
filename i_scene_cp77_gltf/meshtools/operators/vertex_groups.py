@@ -13,9 +13,7 @@ from ..services.weight_transfer_service import transfer_weights
 class CP77WeightTransfer(Operator):
     bl_idname = "cp77.trans_weights"
     bl_label = "Cyberpunk 2077 Weight Transfer Tool"
-    bl_description = (
-        "Weight each target mesh vertex from the nearest surface of the source meshes"
-    )
+    bl_description = "Transfer weights from source mesh to target mesh"
     vertInterop: BoolProperty(
         name="Use Nearest Vert Interpolated",
         description="Sometimes gives better results when the default mode fails",
@@ -76,9 +74,10 @@ class CP77WeightTransfer(Operator):
 
 class CP77GroupVerts(Operator):
     bl_idname = "cp77.group_verts"
+    bl_parent_id = "CP77_PT_MeshTools"
     bl_label = "Assign to Nearest Group"
     bl_options = {"REGISTER", "UNDO"}
-    bl_description = "Give the selected meshes' vertices without weights the weights of their nearest weighted vertex"
+    bl_description = "Assign ungrouped vertices to their nearest group"
 
     def execute(self, context):
         return finish_operator(self, group_ungrouped_vertices(context))
@@ -86,9 +85,10 @@ class CP77GroupVerts(Operator):
 
 class CP77DeleteVertGroups(Operator):
     bl_idname = "cp77.del_empty_vgroup"
+    bl_parent_id = "CP77_PT_MeshTools"
     bl_label = "Delete Unused Vertex Groups"
     bl_options = {"REGISTER", "UNDO"}
-    bl_description = "Delete the selected meshes' vertex groups that carry no weight or that no bone of their armature uses"
+    bl_description = "Delete empty vertex groups"
 
     def execute(self, context):
         return finish_operator(self, delete_empty_vertex_groups(context))

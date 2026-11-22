@@ -10,12 +10,7 @@ from .keyframes import (
     capture_fcurves,
     restore_fcurves,
 )
-from .transactions import (
-    current_import_transaction,
-    restore_id_properties,
-    snapshot_id_properties,
-    track_mutation,
-)
+from .transactions import restore_id_properties, snapshot_id_properties, track_mutation
 
 _LOG = get_logger(__name__)
 
@@ -85,15 +80,6 @@ def active_action(context, armature=None):
     return getattr(animation_data, "action", None)
 
 
-def action_index(action) -> int:
-    """action's position in bpy.data.actions, or -1"""
-    actions = bpy.data.actions
-    index = actions.find(action.name)
-    if index >= 0 and actions[index] == action:
-        return index
-    return next((index for index, candidate in enumerate(actions) if candidate == action), -1)
-
-
 def track_id_properties(owner, *, label="ID properties"):
     """Restore every ID property of owner when the active transaction rolls back"""
     if owner is None:
@@ -149,11 +135,7 @@ def track_animation_data(obj, *, label="animation data"):
 
 def track_pose(armature, *, label="pose"):
     """Restore rotation modes and basis transforms of every pose bone when the transaction rolls back"""
-    transaction = current_import_transaction()
-    if transaction is None or armature is None or armature.pose is None:
-        return
-    key = ("pose", rna_identity(armature))
-    if transaction.tracks_mutation(key):
+    if armature is None or armature.pose is None:
         return
     state = tuple(
         (bone.name, bone.rotation_mode, bone.matrix_basis.copy())
@@ -171,7 +153,7 @@ def track_pose(armature, *, label="pose"):
                 bone.matrix_basis = matrix
         armature.update_tag(refresh={"DATA"})
 
-    transaction.track_mutation(key, restore, label=label)
+    track_mutation(("pose", rna_identity(armature)), restore, label=label)
 
 
 def track_scene_frames(scene, *, label="scene frames"):

@@ -4,10 +4,6 @@ from collections.abc import Mapping, Sequence
 
 import bpy
 
-from ..animation.domain.animgraph.shared_meta_pose import (
-    resolve_owner_index,
-    resource_stem,
-)
 from ..animation.domain.rig.assembly import (
     METARIG_PART_LEDGER_KEY,
     METARIG_PART_OVERRIDES_KEY,
@@ -35,7 +31,6 @@ from ..animation.domain.rig.metadata import (
     encode_json_document,
     source_rig_paths_from,
 )
-from ..assetio.cache import store_bounded
 from ..assetio.paths import local_path_key
 from ..assetio.values import json_array
 
@@ -95,9 +90,9 @@ def _stored_documents(payload: str) -> dict:
             local_path_key(path): document
             for path, document in decode_rig_part_documents(payload).items()
         }
-        store_bounded(
-            _STORED_DOCUMENTS, payload, documents, limit=_STORED_DOCUMENT_LIMIT
-        )
+        if len(_STORED_DOCUMENTS) >= _STORED_DOCUMENT_LIMIT:
+            _STORED_DOCUMENTS.pop(next(iter(_STORED_DOCUMENTS)))
+        _STORED_DOCUMENTS[payload] = documents
     return documents
 
 
@@ -189,22 +184,3 @@ def record_metarig_user_edit(
     )
     for key, text in edits.encoded().items():
         target[key] = text
-
-
-def rig_part_items(armature) -> list[tuple[str, str, str]]:
-    """The armature's MetaRig parts as enum items"""
-    return [
-        (path, resource_stem(path, ".rig.json") or path, path)
-        for path in source_rig_paths(armature)
-    ]
-
-
-def default_rig_part(armature, filepath: str) -> str:
-    """The part the preview binds the graph to without a pick"""
-    paths = source_rig_paths(armature)
-    try:
-        return paths[
-            resolve_owner_index(filepath, paths, source_rig_part_bindings(armature))
-        ]
-    except ValueError:
-        return paths[0] if paths else ""

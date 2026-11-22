@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 
 import bpy
 
-from ...assetio.values import json_array, json_text
 from ...core.log import debug_exception, get_logger
 from ...ink.domain.animation import (
     InkAnimationLibrary,
@@ -28,7 +28,7 @@ from .text import BlenderFonts
 _LOG = get_logger(__name__)
 # Widget edits not yet exported, as JSON on the screen's object.
 PENDING_EDITS_KEY = "inkPendingEdits"
-SCREEN_FONTS = BlenderFonts()
+_FONTS = BlenderFonts()
 _PIXELS = PartPixels()
 _SCREENS: dict[str, Screen] = {}
 # The playing screens' objects by pointer, each with the name it was last found by, so a renamed screen keeps playing.
@@ -57,7 +57,7 @@ class Screen:
             return False
         canvas, _scale, _laid_out = render_library(
             self.loaded,
-            SCREEN_FONTS,
+            _FONTS,
             _PIXELS,
             overrides=overrides,
             max_dimension=self.max_dimension,
@@ -75,7 +75,7 @@ def render(
     """The switched-on canvas of a loaded library"""
     canvas, _scale, _laid_out = render_library(
         loaded,
-        SCREEN_FONTS,
+        _FONTS,
         _PIXELS,
         overrides=switched_on_overrides(animation),
         max_dimension=max_dimension,
@@ -97,12 +97,12 @@ def _stamp(obj, screen: Screen) -> None:
     obj["cp77_ink_animation_json"] = (
         animation.source_path if animation is not None else ""
     )
-    obj["cp77_ink_animation_durations"] = json_text(
+    obj["cp77_ink_animation_durations"] = json.dumps(
         {
             sequence.name: sequence.duration
             for sequence in (animation.sequences if animation else ())
         },
-        sort_keys=False,
+        separators=(",", ":"),
     )
     preferred = preferred_sequence(animation)
     obj["cp77_ink_active_sequence"] = preferred.name if preferred is not None else ""
@@ -236,11 +236,14 @@ def clone(source, target, copy_map) -> bool:
         return False
     copy = track_created_datablock("images", image.copy())
     copy.name = fit_id_name(target.name, "_UIRenderTexture")
-    bound = json_array(source.get("cp77_ink_bound_materials"))
+    try:
+        bound = json.loads(str(source.get("cp77_ink_bound_materials", "[]") or "[]"))
+    except (TypeError, ValueError):
+        bound = []
     names = rebind_copies(
         copy_map, str(source.get("componentName", "") or ""), set(bound), copy
     )
-    target["cp77_ink_bound_materials"] = json_text(list(names))
+    target["cp77_ink_bound_materials"] = json.dumps(list(names), separators=(",", ":"))
     register(
         target,
         copy,
@@ -323,4 +326,3 @@ def keep_rasters() -> None:
 def clear() -> None:
     _SCREENS.clear()
     _PLAYING.clear()
-    SCREEN_FONTS.clear()

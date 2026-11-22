@@ -12,18 +12,17 @@ from ...animation.model.animgraph.schema import enums
 from ...animation.model.animgraph.sm_assembly import (
     TransitionSpec,
     overlay_data,
+    tidy_float,
     tidy_floats,
 )
 from ...assetio import animgraph_json
-from ...assetio.values import cname_text, nine_digit_float
-from . import categories, property_codec
-from .sm_model import (
+from ...assetio.values import cname_text
+from . import property_codec
+from .sm_properties import (
     BLEND_INTERPOLATOR_TYPE,
     INTERPOLATION_TYPE_ENUM,
     INTERPOLATION_TYPE_ITEMS,
-    new_handle_id,
 )
-from .tree_ops import new_editor_node
 
 ENTRY_OWNER = "__entry__"
 ANY_OWNER = "__any__"
@@ -48,6 +47,12 @@ def _loads(text: str) -> Any:
         return animgraph_json.loads(text)
     except ValueError:
         return None
+
+
+def _new_handle() -> str:
+    from .builder import new_handle_id
+
+    return new_handle_id()
 
 
 def _is_ref(value: Any) -> bool:
@@ -91,10 +96,10 @@ def fill_condition(
     cond.fields.clear()
     if short == sm_conditions.GROUP:
         return
-    specs = sm_conditions.condition_types().get(short, ())
+    specs = sm_conditions.CONDITION_TYPES.get(short, ())
     defaults = (
         sm_conditions.default_condition_data(short)
-        if short in sm_conditions.condition_types()
+        if short in sm_conditions.CONDITION_TYPES
         else {}
     )
     values = {
@@ -107,7 +112,7 @@ def fill_condition(
     ordered = [(spec.name, spec) for spec in specs if spec.name in values]
     ordered += [(key, None) for key in sorted(values) if key not in known]
     for key, spec in ordered:
-        property_codec.add_array_field(
+        property_codec._add_array_field(
             host, key, values[key], red_type_hint=_field_hint(spec)
         )
 
@@ -120,7 +125,7 @@ def read_condition(cond) -> sm_conditions.FlatCondition:
         original = None
     fields: dict = {}
     if short != sm_conditions.GROUP:
-        # Floats are tidied (see ``nine_digit_float``); an unchanged value keeps its original token.
+        # Floats are tidied (see ``tidy_float``); an unchanged value keeps its original token.
         current = {
             f.key: tidy_floats(property_codec.encode_simple_value(f))
             for f in cond.fields
@@ -264,9 +269,9 @@ def record_from_wrapper(
     _reset(rec)
     if wrapper is None:
         if list_name != DEFAULT_LIST:
-            rec.handle_id = new_handle_id()
+            rec.handle_id = _new_handle()
             if list_name != "conditionalEntries":
-                rec.interpolator_handle = new_handle_id()
+                rec.interpolator_handle = _new_handle()
         return
 
     wrapper = copy.deepcopy(wrapper)
@@ -313,13 +318,13 @@ def renew_record(rec) -> None:
         return
     rec.original_index = -1
     rec.original_json = ""
-    rec.handle_id = new_handle_id()
+    rec.handle_id = _new_handle()
     entry = rec.list_name == "conditionalEntries"
     rec.interpolator_handle = (
-        "" if entry or not rec.interpolator_type else new_handle_id()
+        "" if entry or not rec.interpolator_type else _new_handle()
     )
     for cond in rec.conditions:
-        cond.handle_id = new_handle_id()
+        cond.handle_id = _new_handle()
 
 
 def _depot_ref(text: str, original: Any) -> dict:
@@ -350,7 +355,7 @@ def _interpolator_wrapper(rec, interp_type: str, original_interp: Any) -> dict:
         handle = str(original_interp.get("HandleId", ""))
     if not handle:
         handle = (
-            new_handle_id()
+            _new_handle()
         )  # a placeholder for this export only; the record is not changed
     original_data = (
         original_interp.get("Data") if isinstance(original_interp, dict) else None
@@ -381,7 +386,7 @@ def record_to_spec(rec, owner: str) -> TransitionSpec:
     original_data = original["Data"] if original else {}
     entry = rec.list_name == "conditionalEntries"
 
-    handle = rec.handle_id or new_handle_id()
+    handle = rec.handle_id or _new_handle()
 
     data: dict = {
         "$type": original_data.get("$type")
@@ -391,7 +396,7 @@ def record_to_spec(rec, owner: str) -> TransitionSpec:
         "priority": int(rec.priority),
     }
     if not entry:
-        data["duration"] = nine_digit_float(rec.duration)
+        data["duration"] = tidy_float(rec.duration)
         data["canRequestInertialization"] = bool(rec.can_request_inertialization)
         data["supportBlendFromPose"] = bool(rec.support_blend_from_pose)
         data["isOutTransitionFromAction"] = bool(rec.is_out_transition_from_action)
@@ -509,7 +514,7 @@ def owner_key(node) -> str:
     return str(getattr(node, "red_handle_id", ""))
 
 
-def pseudo_node(sm_tree, red_type: str):
+def _pseudo_node(sm_tree, red_type: str):
     if sm_tree is None:
         return None
     for node in sm_tree.nodes:
@@ -520,6 +525,8 @@ def pseudo_node(sm_tree, red_type: str):
 
 def new_pseudo_node(sm_tree, sm_handle: str, short: str, label: str):
     """The Entry or Any State node of a state machine subtree, created on first use"""
+    from . import categories
+    from .tree_ops import new_editor_node
 
     key = f"editor{short}_{sm_handle}"
     existing = sm_tree.nodes.get(key)

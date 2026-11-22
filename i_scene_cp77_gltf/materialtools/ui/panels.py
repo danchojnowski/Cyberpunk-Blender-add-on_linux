@@ -277,9 +277,11 @@ def _draw_microblend(layout, props, socket_map):
     if panel is None:
         return
     layout = panel
-    layout.prop(
+    row = layout.row(align=True)
+    row.prop(
         props, "multilayer_microblend_pointer", text="Microblend", icon="NODE_TEXTURE"
     )
+    row.operator("cp77.load_depot_microblends", text="", icon="FILE_REFRESH")
     icon = microblend_icon(props.multilayer_microblend_pointer)
     if icon:
         layout.template_icon(icon_value=icon, scale=4.0)

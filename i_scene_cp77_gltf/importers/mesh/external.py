@@ -7,11 +7,9 @@ import bpy
 
 from ...assetio.paths import absolute_local_path_key
 from ...bartmoss.hierarchy import parent_depth
-from ...blender.context import safe_mode_switch
 from ...blender.identity import rna_identity
 from ...blender.keyframes import object_transform_animated
 from ...blender.transactions import (
-    remove_datablock,
     restore_id_properties,
     snapshot_datablocks,
     snapshot_id_properties,
@@ -57,10 +55,11 @@ def _context_snapshot():
 
 def _restore_context(snapshot):
     selected, active, mode = snapshot
-    try:
-        safe_mode_switch("OBJECT")
-    except RuntimeError as error:
-        _LOG.debug("Object mode was not restored: %s", error, exc_info=True)
+    if bpy.context.mode != "OBJECT":
+        try:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        except RuntimeError as error:
+            _LOG.debug("Object mode was not restored: %s", error, exc_info=True)
     for obj in tuple(bpy.context.selected_objects):
         obj.select_set(False)
     for obj in selected:
@@ -68,16 +67,27 @@ def _restore_context(snapshot):
             obj.select_set(True)
     if active is not None and active.name in bpy.data.objects:
         bpy.context.view_layer.objects.active = active
-    try:
-        safe_mode_switch(mode)
-    except RuntimeError as error:
-        _LOG.debug("%s mode was not restored: %s", mode, error, exc_info=True)
+    target_mode = "EDIT" if str(mode).startswith("EDIT") else mode
+    if target_mode != "OBJECT":
+        try:
+            bpy.ops.object.mode_set(mode=target_mode)
+        except RuntimeError as error:
+            _LOG.debug(
+                "%s mode was not restored: %s", target_mode, error, exc_info=True
+            )
 
 
 def _new_datablocks(snapshot, name):
     values = getattr(bpy.data, name, ())
     previous = snapshot.get(name, frozenset())
     return tuple(value for value in values if rna_identity(value) not in previous)
+
+
+def _remove_datablock(collection, value):
+    try:
+        collection.remove(value, do_unlink=True)
+    except TypeError:
+        collection.remove(value)
 
 
 def _track_scene_state(scene):
@@ -125,8 +135,11 @@ def _remove_unsupported_objects(imported_objects):
                 "CAMERA": "cameras",
                 "LIGHT": "lights",
             }.get(object_type)
-            if collection_name:
-                remove_datablock(collection_name, data)
+            collection = (
+                getattr(bpy.data, collection_name, None) if collection_name else None
+            )
+            if collection is not None:
+                _remove_datablock(collection, data)
     return tuple(survivors)
 
 
@@ -253,7 +266,8 @@ def import_external_glb(
     snapshot = snapshot_datablocks()
     context_snapshot = _context_snapshot()
     try:
-        safe_mode_switch("OBJECT")
+        if bpy.context.mode != "OBJECT":
+            bpy.ops.object.mode_set(mode="OBJECT")
         if not bpy.ops.import_scene.gltf.poll():
             raise ExternalGLBImportError(
                 "Blender's glTF importer is unavailable in the current context."
@@ -302,7 +316,7 @@ def import_external_glb(
                     )
             for collection in tuple(imported_collections):
                 try:
-                    remove_datablock("collections", collection)
+                    _remove_datablock(bpy.data.collections, collection)
                 except (ReferenceError, RuntimeError, TypeError, ValueError) as error:
                     _LOG.debug(
                         "Temporary glTF collection was not removed: %s",

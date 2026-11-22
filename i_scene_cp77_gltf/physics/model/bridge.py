@@ -15,4 +15,3 @@ class PhysXCapability:
     state: PhysXCapabilityState
     reason: str = ""
     bridge_path: str = ""
-    transient: bool = False

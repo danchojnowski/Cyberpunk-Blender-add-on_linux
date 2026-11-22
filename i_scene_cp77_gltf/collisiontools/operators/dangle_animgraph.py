@@ -8,7 +8,6 @@ from ...blender.animgraph.preview_settings import adopt_dangle_settings
 from ...blender.workspace import is_animation_workspace, show_graph
 from ...core.log import get_logger
 from ...core.notifications import import_operation, report
-from ...exporters.animgraph.operators import AnimGraphExportPath
 from ..blender.dangle_context import get_active_rig, rig_for_context
 from ..services.dangles.sync import (
     export_from_specialist_editor,
@@ -84,7 +83,7 @@ class DANGLE_OT_import_json(bpy.types.Operator, ImportHelper):
         return {"FINISHED"}
 
 
-class DANGLE_OT_export_animgraph(AnimGraphExportPath, bpy.types.Operator, ExportHelper):
+class DANGLE_OT_export_animgraph(bpy.types.Operator, ExportHelper):
     bl_idname = "dangle.export_animgraph"
     bl_label = "Export WolvenKit AnimGraph JSON"
     bl_options = {"REGISTER"}
@@ -101,6 +100,13 @@ class DANGLE_OT_export_animgraph(AnimGraphExportPath, bpy.types.Operator, Export
         source = str(rig.dangle_state.animgraph_source_path or "")
         self.filepath = animgraph_json_path(previous or source or f"{rig.name}_dangle")
         return ExportHelper.invoke(self, context, event)
+
+    def check(self, context):
+        normalized = animgraph_json_path(self.filepath)
+        if normalized != self.filepath:
+            self.filepath = normalized
+            return True
+        return False
 
     def execute(self, context):
         rig = get_active_rig(context)
@@ -132,7 +138,12 @@ class DANGLE_OT_export_animgraph(AnimGraphExportPath, bpy.types.Operator, Export
         refresh_error = summary.get("editorRefreshError")
         warnings = summary.get("warnings", ()) or ()
         if warnings:
-            unreachable = len(summary.get("unreachableNodes", ()))
+            unreachable = sum(
+                1
+                for warning in warnings
+                if str(warning).startswith("Animation node ")
+                and "unreachable from initialization roots" in str(warning)
+            )
             _LOG.warning(
                 "AnimGraph export validation warnings: total=%d unreachable_nodes=%d other=%d first=%s",
                 len(warnings),

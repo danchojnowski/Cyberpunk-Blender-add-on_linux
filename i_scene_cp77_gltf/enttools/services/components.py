@@ -4,12 +4,11 @@ import json
 
 import bpy
 
-from ...blender.collections import remap_copied_object_references, root_objects
+from ...blender.collections import root_objects
 from ...blender.identity import rna_identity
 from ...blender.mesh_source import base_mesh, mesh_source
 from ...blender.operator_results import OperationResult
 from ...blender.transactions import (
-    remove_datablock_on_commit,
     track_collection_state,
     track_created_datablock,
     track_mutation,
@@ -17,6 +16,7 @@ from ...blender.transactions import (
     transactional,
 )
 from ...core.log import get_logger
+from ...core.notifications import show_message
 from ...entity.domain import chunks
 from ...entity.domain.chunks import FULL_MASK, mask_text, parse_mask
 from ...entity.domain.document import (
@@ -26,6 +26,7 @@ from ...entity.domain.document import (
     slot_bone,
 )
 from ...entity.model.component_types import SKINNED_TYPES
+from ...importers.common.collections import remap_copied_object_references
 from ..blender import apply, mesh_appearance
 from ..blender.scene import (
     COMPONENT_NAME_KEY,
@@ -48,19 +49,6 @@ NEW_MATERIAL = "__NEW__"
 
 class EditError(RuntimeError):
     """An edit that cannot be applied"""
-
-
-def _track_new_component(collection, index, name, kind):
-    def forget():
-        components = collection.cp77_entity_state.components
-        if len(components) > index and components[index].name == name:
-            components.remove(index)
-
-    track_mutation(
-        (kind, rna_identity(collection), name),
-        forget,
-        label="Entity component",
-    )
 
 
 def _live_items(state):
@@ -268,6 +256,23 @@ def set_field(context, collection, index: int, field: str, value) -> OperationRe
     return apply_field(context, collection, index, field)
 
 
+def field_changed(context, item, field: str) -> None:
+    """A component field was edited in the panel"""
+    collection = item.id_data
+    index = next(
+        i
+        for i, candidate in enumerate(collection.cp77_entity_state.components)
+        if candidate == item
+    )
+    result = apply_field(context, collection, index, field)
+    if not result.ok:
+        show_message(result.message, severity=result.level, logger=_LOG)
+    elif field in {"attach", "name"}:
+        from .selection import refresh_choices
+
+        refresh_choices(context)
+
+
 @transactional("Entity chunk visibility")
 def set_part_visible(
     context, collection, index: int, part: int, visible: bool
@@ -369,28 +374,10 @@ def _owned_elsewhere(objects) -> str:
     return ""
 
 
-def _relink(obj, owners):
-    def relink():
-        for owner in owners:
-            if obj.name not in owner.objects:
-                owner.objects.link(obj)
-
-    return relink
-
-
 def _delete_objects(objects) -> None:
     for obj in objects:
-        if bpy.data.objects.get(obj.name) != obj:
-            continue
-        owners = tuple(obj.users_collection)
-        for owner in owners:
-            owner.objects.unlink(obj)
-        track_mutation(
-            ("enttools-unlinked", rna_identity(obj)),
-            _relink(obj, owners),
-            label="Entity component object",
-        )
-        remove_datablock_on_commit("objects", obj)
+        if bpy.data.objects.get(obj.name) == obj:
+            bpy.data.objects.remove(obj, do_unlink=True)
 
 
 @transactional("Add entity component")
@@ -444,7 +431,18 @@ def add_component(collection, objects, *, name: str) -> OperationResult:
         item.skin_target = (
             template.skin_target if item.type_key in SKINNED_TYPES else ""
         )
-    _track_new_component(collection, len(state.components) - 1, name, "enttools-added")
+    index = len(state.components) - 1
+
+    def forget():
+        components = collection.cp77_entity_state.components
+        if len(components) > index and components[index].name == name:
+            components.remove(index)
+
+    track_mutation(
+        ("enttools-added", rna_identity(collection), name),
+        forget,
+        label="Entity component",
+    )
     for obj in meshes:
         obj[COMPONENT_NAME_KEY] = name
     try:
@@ -528,7 +526,7 @@ def replace_mesh(context, collection, index: int, objects) -> OperationResult:
         and not old_holder.all_objects
         and not old_holder.children
     ):
-        remove_datablock_on_commit("collections", old_holder)
+        bpy.data.collections.remove(old_holder)
     remember_applied(item)
     return OperationResult.finished(f"Replaced the mesh of {item.name}.")
 
@@ -607,8 +605,17 @@ def duplicate_component(collection, index: int, *, name: str) -> OperationResult
             source.mesh if mesh != source.mesh else ""
         )
         item.mesh_collection, item.mesh_collection_name = holder, holder.name
-    _track_new_component(
-        collection, len(state.components) - 1, name, "enttools-duplicated"
+    added = len(state.components) - 1
+
+    def forget():
+        components = collection.cp77_entity_state.components
+        if len(components) > added and components[added].name == name:
+            components.remove(added)
+
+    track_mutation(
+        ("enttools-duplicated", rna_identity(collection), name),
+        forget,
+        label="Entity component",
     )
     remember_applied(item)
     return OperationResult.finished(f"Duplicated {source.name} as {name}.")

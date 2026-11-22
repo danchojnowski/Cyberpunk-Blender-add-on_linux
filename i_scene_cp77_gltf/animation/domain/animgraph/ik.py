@@ -4,7 +4,7 @@ import math
 from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import replace
 
-from ....assetio.values import cname_or_empty, coerce_float
+from ....assetio.values import cname_or_empty
 from ....bartmoss.ik import solve_two_bone_ik
 from ....bartmoss.qs_transform import QsTransform, compose, relative_to
 from ....bartmoss.quaternion import (
@@ -22,9 +22,7 @@ from .source_channels import vector_channel_data
 from .topology import has_link
 
 
-def bone_model_transform(
-    pose, parent_map, name: str, model_space: bool, cache: dict
-) -> QsTransform:
+def _model(pose, parent_map, name: str, model_space: bool, cache: dict) -> QsTransform:
     if not name:
         return QsTransform.identity()
     return frame_model_transform(name, pose, parent_map, model_space, cache)
@@ -50,16 +48,14 @@ def add_ik_request(
     if bone not in pose:
         return tuple(targets)
     cache: dict = {}
-    target_ms = bone_model_transform(pose, parent_map, bone, model_space, cache)
+    target_ms = _model(pose, parent_map, bone, model_space, cache)
     previous = targets[position] if position >= 0 else IkTarget(chain)
     pole_bone = str(data.get("poleTargetBone", "") or "")
     pole_weight, pole = 0.0, previous.pole
     if pole_bone in pose:
         pole_weight = 1.0
         pole = add3(
-            bone_model_transform(
-                pose, parent_map, pole_bone, model_space, cache
-            ).translation,
+            _model(pose, parent_map, pole_bone, model_space, cache).translation,
             data.get("polePositionOffset", (0.0, 0.0, 0.0)),
         )
     request = replace(
@@ -104,7 +100,7 @@ def read_ik_request(
         return False
     parent = str(parent_map.get(bone, "") or "")
     parent_ms = (
-        bone_model_transform(pose, parent_map, parent, model_space, {})
+        _model(pose, parent_map, parent, model_space, {})
         if parent in pose
         else QsTransform.identity()
     )
@@ -264,7 +260,7 @@ def evaluate_ik2_constraint(
         return ()
     max_angle = float(data.get("maxHingeAngle", 0.0) or 0.0)
     first_ls, second_ls, end_ls = solve_ik2(
-        bone_model_transform(pose, parent_map, parent, model_space, {}),
+        _model(pose, parent_map, parent, model_space, {}),
         pose[first],
         pose[second],
         pose[end],
@@ -359,6 +355,12 @@ def ik2_constraint_data(node_type, node):
 
 
 def ik2_data(node_type, node):
+    def gain(key):
+        return float(node.get(key, 1.0) if node.get(key) is not None else 1.0)
+
+    def angle(key, default):
+        return float(node.get(key, default) if node.get(key) is not None else default)
+
     return {
         "firstBone": index_name(
             node.get("firstBone"), "animTransformIndex", allow_text=True
@@ -371,16 +373,12 @@ def ik2_data(node_type, node):
         ),
         "bone": index_name(node.get("bone"), "animTransformIndex", allow_text=True),
         "hingeAxis": str(node.get("hingeAxis", "Y") or "Y"),
-        "minHingeAngle": coerce_float(
-            node.get("minHingeAngleDegrees"), 0.0, unwrap=False
-        ),
-        "maxHingeAngle": coerce_float(
-            node.get("maxHingeAngleDegrees"), 180.0, unwrap=False
-        ),
+        "minHingeAngle": angle("minHingeAngleDegrees", 0.0),
+        "maxHingeAngle": angle("maxHingeAngleDegrees", 180.0),
         "gains": (
-            coerce_float(node.get("firstBoneIkGain"), 1.0, unwrap=False),
-            coerce_float(node.get("secondBoneIkGain"), 1.0, unwrap=False),
-            coerce_float(node.get("endBoneIkGain"), 1.0, unwrap=False),
+            gain("firstBoneIkGain"),
+            gain("secondBoneIkGain"),
+            gain("endBoneIkGain"),
         ),
         "enforceEndPosition": bool(node.get("enforceEndPosition", True)),
         "enforceEndOrientation": bool(node.get("enforceEndOrientation", False)),
@@ -420,13 +418,13 @@ def evaluate_ik2(
     cache: dict = {}
     bone = str(data.get("bone", "") or "")
     if (target_ms is None or target_rotation_ms is None) and bone in pose:
-        bone_ms = bone_model_transform(pose, parent_map, bone, model_space, cache)
+        bone_ms = _model(pose, parent_map, bone, model_space, cache)
         target_ms = bone_ms.translation if target_ms is None else target_ms
         target_rotation_ms = (
             bone_ms.rotation_xyzw if target_rotation_ms is None else target_rotation_ms
         )
     first_ls, second_ls, end_ls = solve_ik2(
-        bone_model_transform(pose, parent_map, parent, model_space, cache),
+        _model(pose, parent_map, parent, model_space, cache),
         pose[first],
         pose[second],
         pose[end],

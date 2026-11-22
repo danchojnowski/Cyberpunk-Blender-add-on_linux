@@ -50,8 +50,7 @@ def _spec_for(name: str, rtti_type: str) -> FieldSpec | None:
     return None
 
 
-@registry.schema_cache
-def condition_types() -> dict[str, tuple[FieldSpec, ...]]:
+def _build_catalogue() -> dict[str, tuple[FieldSpec, ...]]:
     """Every concrete condition class of the RTTI schema, with its fields"""
     table: dict[str, tuple[FieldSpec, ...]] = {}
     for name in registry.all_class_names():
@@ -93,6 +92,9 @@ def short_name(type_name: str) -> str:
     return text.removeprefix(CONDITION_PREFIX)
 
 
+CONDITION_TYPES: dict[str, tuple[FieldSpec, ...]] = _build_catalogue()
+
+
 def _default_value(spec: FieldSpec) -> Any:
     if spec.kind == "CNAME":
         return cname(spec.default)
@@ -111,7 +113,7 @@ def default_condition_data(short: str) -> dict:
     if short == GROUP:
         data["conditions"] = []
         return data
-    for spec in condition_types()[short]:
+    for spec in CONDITION_TYPES[short]:
         data[spec.name] = _default_value(spec)
     return data
 

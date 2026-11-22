@@ -15,11 +15,12 @@ from .graph import (
 )
 from .mat_common import (
     MaterialTypeBase,
+    create_scene_time_value,
+    default_texture_path,
     find_input,
     new_labeled_node,
     param_float,
     param_vector,
-    scene_time_socket,
 )
 from .normal_math import create_cp77_normal_texture
 
@@ -52,7 +53,8 @@ _DEFAULTS = {
 
 
 class MetalBaseBlackbody(MaterialTypeBase):
-    texture_defaults = _TEXTURE_DEFAULTS
+    def _texture_path(self, data, key):
+        return default_texture_path(data, key, _TEXTURE_DEFAULTS)
 
     def _texture(self, nodes, links, data, key, location, uv, *, non_color=False):
         node = self._relative_texture_node(
@@ -125,12 +127,12 @@ class MetalBaseBlackbody(MaterialTypeBase):
         )
         move_speed = param_float(data, "HeatMoveSpeed", _DEFAULTS["HeatMoveSpeed"])
         if move_speed > 0.0:
-            time = scene_time_socket(tree.nodes, (-1800, -520), "CP77 Blackbody Time")
+            time = create_scene_time_value(tree, -1800, -520, "CP77 Blackbody Time")
             offset = shader_nodes.math(
                 nodes,
                 links,
                 "MULTIPLY",
-                time,
+                time.outputs["Value"],
                 move_speed,
                 name="Time x HeatMoveSpeed",
                 location=(-1560, -520),

@@ -1,18 +1,26 @@
 from __future__ import annotations
 
-from ..assetio.values import json_array, json_text
+import json
 
 EVENT_MARKER_STATE_KEY = "_cp77_event_markers_json"
 
 
 def _event_marker_state(action):
+    payload = action.get(EVENT_MARKER_STATE_KEY)
+    if not payload:
+        return []
+    try:
+        values = json.loads(str(payload))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
     result = []
-    for item in json_array(action.get(EVENT_MARKER_STATE_KEY)):
-        if isinstance(item, list) and len(item) == 2:
-            try:
-                result.append((str(item[0]), int(item[1])))
-            except (TypeError, ValueError):
-                pass
+    if isinstance(values, list):
+        for item in values:
+            if isinstance(item, list) and len(item) == 2:
+                try:
+                    result.append((str(item[0]), int(item[1])))
+                except (TypeError, ValueError):
+                    pass
     return result
 
 
@@ -39,4 +47,6 @@ def sync_markers_from_events(action):
         marker = action.pose_markers.new(event.event_name or event.event_type)
         marker.frame = event.start_frame
         current.append([str(marker.name), int(marker.frame)])
-    action[EVENT_MARKER_STATE_KEY] = json_text(current)
+    action[EVENT_MARKER_STATE_KEY] = json.dumps(
+        current, ensure_ascii=False, separators=(",", ":")
+    )

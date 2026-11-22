@@ -27,7 +27,7 @@ class PointConstraintHandler(PoseNodeHandler):
         )
 
     def bone_names(self, spec):
-        names = self.handler_bone_names(spec.data, point_constraint.RED_TYPE)
+        names = {text(spec.data, "transformIndex")}
         names.update(
             text(entry, "transform")
             for entry in spec.data.get("inputWeightedTransforms", ()) or ()

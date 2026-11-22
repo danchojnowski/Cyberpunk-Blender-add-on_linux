@@ -1,6 +1,8 @@
 import os
 from collections import Counter
 
+import bpy
+
 from ...assetio.archive_xl import archive_xl_document, serialize_archive_xl
 from ...assetio.atomic import atomic_write_many
 from ...assetio.documents import DocumentSession
@@ -12,7 +14,6 @@ from ...blender.operator_results import OperationResult
 from ...core.log import get_logger
 from .buffers import ScenePlacements
 from .edits import edited_lights, scaled_objects, sector_edits
-from .errors import SectorExportError
 from .new_sectors import new_sector_collections
 from .repository import SectorSourceRepository
 from .writer import skipped_objects, write_generated_sector, write_new_sector
@@ -76,7 +77,7 @@ def _written_sectors(scene, placements, parsed, layout, include_heightfields):
     for owner, _text, descriptor in written:
         key = depot_path_key(descriptor.depot_path)
         if key in owners:
-            raise SectorExportError(
+            raise ValueError(
                 f"{owners[key]} and {owner} would both be written to {descriptor.depot_path}; rename the "
                 "new sector."
             )
@@ -84,13 +85,14 @@ def _written_sectors(scene, placements, parsed, layout, include_heightfields):
     return written, warnings
 
 
-def _export(scene, filename, use_yaml, include_heightfields):
+def _export(filename, use_yaml, include_heightfields):
     """Write the scene's sector edits for the project filename"""
     if not os.path.isdir(os.path.dirname(filename)):
         raise FileNotFoundError(
             f"Project path does not exist: {os.path.dirname(filename)}"
         )
     layout = cpmodproj_layout(filename)
+    scene = bpy.context.scene
     placements = ScenePlacements(scene)
     with DocumentSession() as documents:
         repository = SectorSourceRepository(documents)
@@ -140,14 +142,17 @@ def _export(scene, filename, use_yaml, include_heightfields):
     return paths, sectors, tuple(warnings)
 
 
+def export_sectors(filename, use_yaml, *, include_heightfields=False) -> dict:
+    """Write the .xl holding the edits of the scene's imported sectors and its new sectors"""
+    return _export(filename, use_yaml, include_heightfields)[0]
+
+
 def export_project_sectors(
-    scene, filename, use_yaml, *, include_heightfields=False
+    filename, use_yaml, *, include_heightfields=False
 ) -> OperationResult:
     """Write the project's sector edits and new sectors, writing nothing on failure"""
     try:
-        paths, sectors, warnings = _export(
-            scene, filename, use_yaml, include_heightfields
-        )
+        paths, sectors, warnings = _export(filename, use_yaml, include_heightfields)
     except Exception as error:
         # The log keeps the traceback; the author is shown the message alone.
         return OperationResult.cancelled(f"Sector export failed: {error}", error=error)
@@ -158,5 +163,4 @@ def export_project_sectors(
         f"Exported {os.path.basename(paths['archive_xl_path'])}: {len(edited)} sectors edited, {moved} placements "
         f"moved, {deleted} deleted, {len(paths['sector_paths'])} new sectors.",
         warnings=warnings,
-        paths=paths,
     )

@@ -17,11 +17,11 @@ class SermoHandler(PoseOpHandler):
     def evaluate(self, context, op):
         if op.child.model_space:
             raise ValueError("Sermo requires a local-space input pose")
-        if context.facial_binding is None:
+        if context._facial_binding is None:
             raise ValueError("Sermo has no bound facial solver")
-        context.trace_facial_frame("sermo_input", op.child)
+        context._trace_facial_frame("sermo_input", op.child)
         solved_pose, solved_tracks = evaluate_facial_graph(
-            context.facial_binding,
+            context._facial_binding,
             op.pose,
             op.track_values,
             lod=context.host.settings.skeletal_lod,
@@ -43,7 +43,7 @@ class SermoHandler(PoseOpHandler):
             op.child.model_space,
             ik_targets=op.child.ik_targets,
         )
-        context.trace_facial_frame("sermo_output", result)
+        context._trace_facial_frame("sermo_output", result)
         return result
 
 

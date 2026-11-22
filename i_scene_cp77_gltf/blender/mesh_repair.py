@@ -8,22 +8,17 @@ import numpy as np
 
 from ..core.log import debug_exception, get_logger, log_once
 from ..gltf.mesh_contract import MAX_SKIN_INFLUENCES, SKIN_WEIGHT_EPSILON
-from .context import preserved_context, safe_mode_switch
+from .context import preserved_context
 from .mesh_validation import (
     MeshValidationError,
     MeshValidationOptions,
     armature_groups,
     armature_modifier,
-    bone_group_indices,
     collect_mesh_validation_issues,
+    deform_group_indices,
     format_validation_issues,
     issue_fix_enabled,
     issues_by_object,
-)
-from .vertex_groups import (
-    give_nearest_weights,
-    normalize_vertex_weights,
-    vertex_weights,
 )
 
 _LOG = get_logger(__name__)
@@ -78,26 +73,14 @@ def copy_mesh_object(mesh_object):
         raise
 
 
-def remove_unmatched_vertex_groups(mesh_object, names, armature):
-    """Remove the vertex groups names, weight the vertices left without bone weights like their nearest weighted vertex and normalize the ones that lost weight, returning the three counts"""
-    removed = {
-        group.index
-        for group in (mesh_object.vertex_groups.get(name) for name in names)
-        if group is not None
-    }
-    lost = [
-        index
-        for index, entries in enumerate(vertex_weights(mesh_object, removed))
-        if entries
-    ]
-    for index in sorted(removed, reverse=True):
-        mesh_object.vertex_groups.remove(mesh_object.vertex_groups[index])
-    bones = bone_group_indices(mesh_object, armature)
-    weights = vertex_weights(mesh_object, bones)
-    emptied = [index for index in lost if not weights[index]]
-    weighted = give_nearest_weights(mesh_object, emptied, bones)
-    normalized = normalize_vertex_weights(mesh_object, lost, bones)
-    return len(removed), weighted, normalized
+def remove_unmatched_vertex_groups(mesh_object, names):
+    removed = 0
+    for name in names:
+        group = mesh_object.vertex_groups.get(name)
+        if group is not None:
+            mesh_object.vertex_groups.remove(group)
+            removed += 1
+    return removed
 
 
 def apply_autofitter_shape_keys(mesh_object, names):
@@ -173,14 +156,8 @@ def dissolve_faces(mesh, degenerate_faces, uv_degenerate_faces=()):
 
 
 def assign_unweighted_vertices(mesh_object, armature, indices):
-    """Weight the vertices indices like their nearest weighted vertex, or fully to the armature's first bone when no vertex has bone weights"""
     if not indices:
         return 0
-    weighted = give_nearest_weights(
-        mesh_object, indices, bone_group_indices(mesh_object, armature)
-    )
-    if weighted:
-        return weighted
     if not armature.data.bones:
         raise MeshValidationError(
             f"Cannot assign unweighted vertices on '{mesh_object.name}': armature has no bones."
@@ -189,14 +166,14 @@ def assign_unweighted_vertices(mesh_object, armature, indices):
     group = mesh_object.vertex_groups.get(root_name) or mesh_object.vertex_groups.new(
         name=root_name
     )
-    group.add(list(indices), 1.0, "REPLACE")
+    group.add(list(indices), 0.01, "REPLACE")
     return len(indices)
 
 
 def limit_vertex_influences(mesh_object, armature, indices, limit=MAX_SKIN_INFLUENCES):
     """Keep each listed vertex's limit strongest deform influences and normalize them"""
     groups = {group.index: group for group in mesh_object.vertex_groups}
-    deform = bone_group_indices(mesh_object, armature)
+    deform = deform_group_indices(mesh_object, armature)
     vertices = mesh_object.data.vertices
     removed = 0
     for index in indices:
@@ -220,10 +197,6 @@ def limit_vertex_influences(mesh_object, armature, indices, limit=MAX_SKIN_INFLU
     return removed
 
 
-def _unused_bones_fix(count):
-    return f"Removed {count} bones no mesh carries weight on, keeping the rest in their places"
-
-
 def copy_armature_without_unused_bones(armature, unused_names):
     remove_names = set(unused_names)
     keep_names = {
@@ -245,7 +218,12 @@ def copy_armature_without_unused_bones(armature, unused_names):
         bpy.context.scene.collection.objects.link(temporary)
 
         with preserved_context():
-            safe_mode_switch("OBJECT")
+            if bpy.context.mode != "OBJECT":
+                result = bpy.ops.object.mode_set(mode="OBJECT")
+                if "FINISHED" not in result:
+                    raise MeshValidationError(
+                        "Blender cancelled the switch to Object Mode"
+                    )
             result = bpy.ops.object.select_all(action="DESELECT")
             if "FINISHED" not in result:
                 raise MeshValidationError("Blender cancelled object deselection")
@@ -254,7 +232,11 @@ def copy_armature_without_unused_bones(armature, unused_names):
             temporary.hide_select = False
             temporary.select_set(True)
             bpy.context.view_layer.objects.active = temporary
-            safe_mode_switch("EDIT")
+            result = bpy.ops.object.mode_set(mode="EDIT")
+            if "FINISHED" not in result:
+                raise MeshValidationError(
+                    "Blender cancelled the switch to Armature Edit Mode"
+                )
             edit_bones = temporary.data.edit_bones
             matrices = {bone.name: bone.matrix.copy() for bone in edit_bones}
             original_parent = {
@@ -276,7 +258,9 @@ def copy_armature_without_unused_bones(armature, unused_names):
                 edit_bone = edit_bones.get(name)
                 if edit_bone is not None:
                     edit_bones.remove(edit_bone)
-            safe_mode_switch("OBJECT")
+            result = bpy.ops.object.mode_set(mode="OBJECT")
+            if "FINISHED" not in result:
+                raise MeshValidationError("Blender cancelled the return to Object Mode")
         return temporary
     except Exception:
         cleanup_validation_temporaries(
@@ -298,24 +282,8 @@ def apply_mesh_issue_fixes(mesh_object, issues):
     uv_faces = set()
     for issue in issues:
         if issue.issue_type == "unmatched_vertex_groups":
-            count, weighted, normalized = remove_unmatched_vertex_groups(
-                mesh_object, issue.details, modifier.object
-            )
+            count = remove_unmatched_vertex_groups(mesh_object, issue.details)
             fixes.append(f"Removed {count} vertex groups without matching bones")
-            if weighted:
-                fixes.append(
-                    f"Weighted {weighted} vertices left without weights like their nearest weighted vertex"
-                )
-            if normalized:
-                fixes.append(f"Normalized the weights of {normalized} vertices")
-        elif issue.issue_type == "unused_vertex_groups":
-            removed = 0
-            for name in issue.details:
-                group = mesh_object.vertex_groups.get(name)
-                if group is not None:
-                    mesh_object.vertex_groups.remove(group)
-                    removed += 1
-            fixes.append(f"Removed {removed} vertex groups without weights")
         elif issue.issue_type == "autofitter_shape_keys":
             count = apply_autofitter_shape_keys(mesh_object, issue.details)
             fixes.append(
@@ -336,7 +304,9 @@ def apply_mesh_issue_fixes(mesh_object, issues):
             count = assign_unweighted_vertices(
                 mesh_object, modifier.object, issue.details
             )
-            fixes.append(f"Weighted {count} unweighted vertices")
+            fixes.append(
+                f"Assigned {count} unweighted vertices to '{modifier.object.data.bones[0].name}'"
+            )
         elif issue.issue_type == "influence_limit":
             count = limit_vertex_influences(mesh_object, modifier.object, issue.details)
             fixes.append(
@@ -377,76 +347,30 @@ def _source_issue_names(issues, mesh_replacements, armature_replacements):
     return tuple(normalized)
 
 
-def _replace_followup_armatures(issues, export_objects, temporaries, fixes_applied):
-    """Swap each armature a fix left with unused bones for a copy without them, copying the meshes it drives first"""
-    mesh_replacements, armature_replacements, temp_objects, temp_armatures = temporaries
-    current = {
-        modifier.object.name: modifier.object
-        for modifier in map(armature_modifier, export_objects)
-        if modifier is not None and modifier.object is not None
-    }
-    source_armatures = {
-        replacement: original for original, replacement in armature_replacements.items()
-    }
-    replaced = False
-    for issue in issues:
-        armature = current.get(issue.object_name)
-        if armature is None:
-            continue
-        replacement = copy_armature_without_unused_bones(armature, issue.details)
-        temp_armatures.append(replacement)
-        original_armature = source_armatures.get(armature, armature)
-        armature_replacements[original_armature] = replacement
-        fixes_applied.setdefault(original_armature.name, []).append(
-            _unused_bones_fix(len(issue.details))
-        )
-        for index, obj in enumerate(export_objects):
-            modifier = armature_modifier(obj)
-            if modifier is None or modifier.object is not armature:
-                continue
-            if obj not in mesh_replacements.values():
-                temporary = copy_mesh_object(obj)
-                temp_objects.append(temporary)
-                mesh_replacements[obj] = temporary
-                export_objects[index] = obj = temporary
-            for each in obj.modifiers:
-                if each.type == "ARMATURE" and each.object is armature:
-                    each.object = replacement
-        replaced = True
-    return replaced
-
-
-def _apply_followup_fixes(
+def _apply_followup_mesh_fixes(
     export_objects,
-    temporaries,
+    mesh_replacements,
     *,
     is_skinned,
     options,
     fixes_applied,
 ):
-    # A fix can leave a problem of its own, as limiting influences can orphan a bone, so the copies go round again.
-    mesh_replacements, armature_replacements = temporaries[:2]
+    source_by_temporary = {
+        temporary: original for original, temporary in mesh_replacements.items()
+    }
     remaining = ()
     for _pass in range(3):
         remaining = collect_mesh_validation_issues(
             export_objects,
             is_skinned=is_skinned,
             options=options,
-            stand_ins={**mesh_replacements, **armature_replacements},
-        )
-        fixable = [issue for issue in remaining if issue_fix_enabled(issue, options)]
-        progressed = _replace_followup_armatures(
-            [issue for issue in fixable if issue.issue_type == "unused_bones"],
-            export_objects,
-            temporaries,
-            fixes_applied,
         )
         fixable_by_name = issues_by_object(
-            issue for issue in fixable if issue.issue_type != "unused_bones"
+            issue
+            for issue in remaining
+            if issue.issue_type != "unused_bones" and issue_fix_enabled(issue, options)
         )
-        source_by_temporary = {
-            temporary: original for original, temporary in mesh_replacements.items()
-        }
+        progressed = False
         for temporary, original in source_by_temporary.items():
             object_issues = fixable_by_name.get(temporary.name, ())
             if not object_issues:
@@ -461,7 +385,6 @@ def _apply_followup_fixes(
         export_objects,
         is_skinned=is_skinned,
         options=options,
-        stand_ins={**mesh_replacements, **armature_replacements},
     )
 
 
@@ -549,7 +472,7 @@ def prepare_mesh_validation_copies(
             temp_armatures.append(replacement)
             armature_replacements[original_armature] = replacement
             fixes_applied.setdefault(original_armature.name, []).append(
-                _unused_bones_fix(len(issue.details))
+                f"Removed {len(issue.details)} bones without vertex groups and reparented retained descendants"
             )
 
         if armature_replacements:
@@ -561,9 +484,9 @@ def prepare_mesh_validation_copies(
                     ):
                         modifier.object = armature_replacements[modifier.object]
 
-        remaining = _apply_followup_fixes(
+        remaining = _apply_followup_mesh_fixes(
             export_objects,
-            (mesh_replacements, armature_replacements, temp_objects, temp_armatures),
+            mesh_replacements,
             is_skinned=is_skinned,
             options=options,
             fixes_applied=fixes_applied,

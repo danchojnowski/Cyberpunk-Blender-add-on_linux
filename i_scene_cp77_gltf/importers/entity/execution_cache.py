@@ -4,8 +4,11 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from ...assetio.paths import depot_path
-from ...entity.domain.entity_data import build_chunk_handle_lookup, component_name
+from ..common.entity_data import (
+    build_chunk_handle_lookup,
+    component_name,
+)
+from ..common.paths import depot_path
 from .policy import NON_VISUAL_MESH_COMPONENT_TYPES
 
 

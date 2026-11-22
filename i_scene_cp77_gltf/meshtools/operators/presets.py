@@ -9,16 +9,7 @@ from ..services.preset_service import (
 )
 
 
-class _PresetChoice:
-    def draw(self, context):
-        props = context.scene.cp77_panel_props
-        row = self.layout.row(align=True)
-        split = row.split(factor=0.275, align=True)
-        split.label(text="Preset:")
-        split.prop(props, "vertex_color_presets", text="")
-
-
-class CP77DeleteVertexcolorPreset(_PresetChoice, Operator):
+class CP77DeleteVertexcolorPreset(Operator):
     bl_idname = "cp77.delete_vertex_color_preset"
     bl_label = "Delete Vertex Colour Preset"
 
@@ -28,6 +19,13 @@ class CP77DeleteVertexcolorPreset(_PresetChoice, Operator):
     def execute(self, context):
         name = context.scene.cp77_panel_props.vertex_color_presets
         return finish_operator(self, delete_vertex_color_preset(name))
+
+    def draw(self, context):
+        props = context.scene.cp77_panel_props
+        row = self.layout.row(align=True)
+        split = row.split(factor=0.275, align=True)
+        split.label(text="Preset:")
+        split.prop(props, "vertex_color_presets", text="")
 
 
 class CP77AddVertexcolorPreset(Operator):
@@ -66,7 +64,7 @@ class CP77AddVertexcolorPreset(Operator):
         split.prop(self, "preset_name", text="")
 
 
-class CP77ApplyVertexcolorPreset(_PresetChoice, Operator):
+class CP77ApplyVertexcolorPreset(Operator):
     bl_idname = "cp77.apply_vertex_color_preset"
     bl_label = "Apply Vertex Colour Preset"
 
@@ -76,3 +74,10 @@ class CP77ApplyVertexcolorPreset(_PresetChoice, Operator):
     def execute(self, context):
         name = context.scene.cp77_panel_props.vertex_color_presets
         return finish_operator(self, apply_vertex_color_preset(context, name))
+
+    def draw(self, context):
+        props = context.scene.cp77_panel_props
+        row = self.layout.row(align=True)
+        split = row.split(factor=0.275, align=True)
+        split.label(text="Preset:")
+        split.prop(props, "vertex_color_presets", text="")

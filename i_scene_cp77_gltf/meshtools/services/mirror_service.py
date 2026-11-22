@@ -1,13 +1,14 @@
-from mathutils import Matrix
+import bpy
+import numpy as np
+from mathutils import Vector
 
 from ...blender.context import (
     restore_previous_context,
     safe_mode_switch,
     store_current_context,
 )
-from ...blender.operator_results import OperationResult
-from ...blender.selection import selected_meshes
-from ...blender.transactions import track_mesh_object, transactional
+from ...blender.operator_results import OperationResult, require_finished
+from ...blender.selection import select_objects, selected_meshes
 from ...core.log import get_logger
 from ..model import shared_mesh_refusal
 
@@ -32,7 +33,22 @@ def mirror_selected_vertex_groups(context):
             safe_mode_switch(original_mode)
 
 
-@transactional("Mesh mirror")
+def _largest_face(mesh):
+    """The index of the mesh's largest face, whose normal shows which way the faces wind"""
+    if not mesh.polygons:
+        return None
+    areas = np.empty(len(mesh.polygons), dtype=np.float64)
+    mesh.polygons.foreach_get("area", areas)
+    return int(np.argmax(areas))
+
+
+def _world_face_normal(obj, index):
+    return (
+        obj.matrix_world.to_3x3().inverted_safe().transposed()
+        @ obj.data.polygons[index].normal
+    ).normalized()
+
+
 def mirror_selected_meshes_x(context):
     selected = selected_meshes(context)
     if not selected:
@@ -46,20 +62,43 @@ def mirror_selected_meshes_x(context):
         safe_mode_switch("OBJECT")
         count = 0
         for obj in selected:
-            track_mesh_object(obj)
-            world = obj.matrix_world.copy()
-            origin = world.translation
-            mirrored = (
-                Matrix.Translation(origin)
-                @ Matrix.Scale(-1.0, 4, (1.0, 0.0, 0.0))
-                @ Matrix.Translation(-origin)
-                @ world
+            select_objects(obj, context=context, reveal=True)
+            face = _largest_face(obj.data)
+            expected = None
+            if face is not None:
+                normal = _world_face_normal(obj, face)
+                expected = Vector((-normal.x, normal.y, normal.z))
+            require_finished(
+                bpy.ops.transform.resize(
+                    value=(-1, 1, 1),
+                    orient_type="GLOBAL",
+                    constraint_axis=(True, False, False),
+                    mirror=True,
+                ),
+                f"Mirroring {obj.name}",
             )
-            parent = world @ obj.matrix_basis.inverted_safe()
-            obj.data.transform(parent.inverted_safe() @ mirrored, shape_keys=True)
-            obj.data.flip_normals()
-            obj.data.update()
-            obj.matrix_basis = Matrix.Identity(4)
+            require_finished(
+                bpy.ops.object.transform_apply(
+                    location=True, rotation=True, scale=True
+                ),
+                f"Applying the mirrored transform on {obj.name}",
+            )
+            # Applying a negative scale reverses the winding in Blender 5.1 and later but not in 5.0; flip the faces
+            # only where they now point inward.
+            if (
+                expected is not None
+                and _world_face_normal(obj, face).dot(expected) < 0.0
+            ):
+                safe_mode_switch("EDIT")
+                require_finished(
+                    bpy.ops.mesh.select_all(action="SELECT"),
+                    f"Selecting the mirrored geometry on {obj.name}",
+                )
+                require_finished(
+                    bpy.ops.mesh.flip_normals(),
+                    f"Flipping the mirrored normals on {obj.name}",
+                )
+                safe_mode_switch("OBJECT")
             count += mirror_vertex_groups(obj)
         return OperationResult.finished(
             f"Mirrored {count} vertex groups across {len(selected)} mesh(es).",

@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any
 
 import numpy as np
@@ -75,8 +74,3 @@ class RigData:
 
     def track_index(self, name):
         return self.track_index_map[name]
-
-
-class RigParseMode(str, Enum):
-    IMPORT = "import"
-    FACIAL = "facial"

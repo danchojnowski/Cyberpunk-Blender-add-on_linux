@@ -2,14 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from .accessors import (
-    COMPONENT_DTYPES,
-    FLOAT,
-    UNSIGNED_BYTE,
-    UNSIGNED_INT,
-    UNSIGNED_SHORT,
-)
-
 
 class GLBBuilder:
     """Shared binary-buffer and accessor builder for direct GLB exporters"""
@@ -82,7 +74,7 @@ class GLBBuilder:
         view_index = self._write_block(payload_array, target)
         accessor = {
             "bufferView": view_index,
-            "componentType": FLOAT,
+            "componentType": 5126,
             "count": count,
             "type": accessor_type,
         }
@@ -120,11 +112,12 @@ class GLBBuilder:
         target: int | None = None,
         include_bounds: bool = False,
     ) -> int:
-        if component_type not in (UNSIGNED_BYTE, UNSIGNED_SHORT, UNSIGNED_INT):
+        dtypes = {5121: np.dtype("<u1"), 5123: np.dtype("<u2"), 5125: np.dtype("<u4")}
+        dtype = dtypes.get(component_type)
+        if dtype is None:
             raise self.error_type(
                 f"Unsupported integer component type {component_type}."
             )
-        dtype = COMPONENT_DTYPES[component_type]
         widths = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
         width = widths.get(accessor_type)
         if width is None:
@@ -173,11 +166,12 @@ class GLBBuilder:
         name: str | None = None,
         target: int | None = None,
     ) -> int:
-        if component_type not in (UNSIGNED_BYTE, UNSIGNED_SHORT):
+        dtypes = {5121: np.dtype("<u1"), 5123: np.dtype("<u2")}
+        dtype = dtypes.get(component_type)
+        if dtype is None:
             raise self.error_type(
                 f"Unsupported normalized component type {component_type}."
             )
-        dtype = COMPONENT_DTYPES[component_type]
         widths = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
         width = widths.get(accessor_type)
         if width is None:

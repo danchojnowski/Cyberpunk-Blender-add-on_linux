@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from typing import Any
 
 from ....animation.model.animgraph import sm_conditions
 from ....animation.model.animgraph.constants import ANIM_NODE_PREFIX
 from ....animation.model.animgraph.schema import enums, registry
-from ....assetio.values import json_text
 from ....core.log import debug_exception, get_logger, log_once
 from .. import (
     index as graph_index,
@@ -20,7 +20,7 @@ from .. import (
 )
 from ..access import get_attr, get_idprop
 from ..property_codec import encode_node_property
-from ..sm_records import ENTRY_RED_TYPE, pseudo_node
+from ..sm_records import ENTRY_RED_TYPE, _pseudo_node
 from . import reporting
 
 _LOG = get_logger(__name__)
@@ -78,6 +78,10 @@ def _node_name(node: Any) -> str:
     return str(get_attr(node, "name", "<node>") or "<node>")
 
 
+def _node_label(node: Any) -> str:
+    return str(get_attr(node, "label", "") or _node_name(node))
+
+
 def _presenter_known(node_type: str, presenter_id: str) -> bool:
     if presenters is None:
         return bool(presenter_id)
@@ -96,18 +100,25 @@ def _presenter_known(node_type: str, presenter_id: str) -> bool:
         return bool(presenter_id)
 
 
+def _safe_json(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def _variable_encode_preview(var: Any) -> tuple[bool, str]:
     """Validate that one graph variable can be encoded as JSON"""
     vt = str(get_attr(var, "var_type", ""))
     try:
         if vt == "Bool":
-            return True, json_text(bool(var.current_bool))
+            return True, _safe_json(bool(var.current_bool))
         if vt == "Int":
-            return True, json_text(int(var.current_int))
+            return True, _safe_json(int(var.current_int))
         if vt == "Float":
-            return True, json_text(float(var.current_float))
+            return True, _safe_json(float(var.current_float))
         if vt == "Vector":
-            return True, json_text(
+            return True, _safe_json(
                 {
                     "$type": "Vector4",
                     "X": float(var.current_vector[0]),
@@ -117,7 +128,7 @@ def _variable_encode_preview(var: Any) -> tuple[bool, str]:
                 }
             )
         if vt == "Quaternion":
-            return True, json_text(
+            return True, _safe_json(
                 {
                     "$type": "Quaternion",
                     "i": float(var.current_vector[0]),
@@ -127,9 +138,16 @@ def _variable_encode_preview(var: Any) -> tuple[bool, str]:
                 }
             )
         if vt == "Transform":
-            return True, str(
+            raw = str(
                 get_attr(var, "current_json", "") or get_attr(var, "current_value", "")
             )
+            if raw:
+                try:
+                    json.loads(raw)
+                    return True, raw
+                except (TypeError, ValueError):
+                    return True, raw
+            return True, ""
 
         raw = str(
             get_attr(var, "current_json", "") or get_attr(var, "current_value", "")
@@ -202,7 +220,7 @@ def _audit_state_machine(
             limit=WARNING_LIMIT,
         )
 
-    entry = pseudo_node(tree, ENTRY_RED_TYPE)
+    entry = _pseudo_node(tree, ENTRY_RED_TYPE)
     if entry is not None and sm_edit.default_row(entry) is None:
         counters["default_state_unset"] += 1
         reporting.append_limited(
@@ -285,6 +303,7 @@ def report_for_tree(tree: Any) -> dict:
         for node in getattr(tree_obj, "nodes", []) or []:
             counters["nodes_total"] += 1
             nname = _node_name(node)
+            nlabel = _node_label(node)
             nhandle = graph_index.node_handle(node)
             ntype = graph_index.node_type(node)
             exportable = graph_index.node_is_exportable(node)

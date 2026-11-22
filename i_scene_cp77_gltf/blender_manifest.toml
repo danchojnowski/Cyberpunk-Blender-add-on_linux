@@ -1,21 +1,18 @@
 schema_version = "1.0.0"
 
 id = "i_scene_cp77_gltf"
-version = "2.5.5"
+version = "2.5.0"
 name = "Cyberpunk 2077 IO Suite"
 tagline = "Import and export Cyberpunk 2077 assets with WolvenKit"
 maintainer = "Red Modding Organization"
-# authors: HitmanHimself, Turk, Jato, dragonzkiller, kwekmaster, glitchered, Simarilius, Doctor Presto,
-# shotlastc, Rudolph2109, Holopointz, Peatral,  John CO., Chase_81, akikoe,  sprt_, Jazza, 86maylin
-    
 type = "add-on"
 
-website = "https://wiki.redmodding.org/cyberpunk-2077-modding/for-mod-creators-theory/modding-tools/wolvenkit-blender-io-suite"
+website = "https://github.com/WolvenKit/Cyberpunk-Blender-add-on"
 tags = ["Import-Export", "Material", "Animation", "Mesh"]
 
 blender_version_min = "5.0.0"
 blender_version_max = "5.4.0"
-platforms = ["windows-x64"]
+platforms = ["linux-x64"]
 license = ["SPDX:GPL-3.0-or-later"]
 wheels = [
   "./wheels/click-8.5.0-py3-none-any.whl",
@@ -29,10 +26,6 @@ wheels = [
   "./wheels/joblib-1.6.0-py3-none-any.whl",
   "./wheels/more_itertools-11.2.1-py3-none-any.whl",
   "./wheels/nltk-3.10.4-py3-none-any.whl",
-  "./wheels/praat_parselmouth-0.4.7-cp311-cp311-win_amd64.whl",
-  "./wheels/praat_parselmouth-0.4.7-cp313-cp313-win_amd64.whl",
-  "./wheels/regex-2026.9.29-cp311-cp311-win_amd64.whl",
-  "./wheels/regex-2026.9.29-cp313-cp313-win_amd64.whl",
   "./wheels/tqdm-4.70.1-py3-none-any.whl",
   "./wheels/typeguard-4.6.0-py3-none-any.whl",
   "./wheels/typing_extensions-4.16.0-py3-none-any.whl",
@@ -44,6 +37,7 @@ clipboard = "Copy AnimGraph JSON and editor data"
 
 [build]
 paths_exclude_pattern = [
+  "wheels/*win_amd64.whl",
   "tests/",
   "*_TEST_RESULTS_*.json",
   "ARRANGEMENT_ATLAS_*.md",

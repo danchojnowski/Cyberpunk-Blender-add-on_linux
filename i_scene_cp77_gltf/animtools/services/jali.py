@@ -13,7 +13,6 @@ from ...animation.domain.jali.lipsync_tracks import (
     scale_pose_tracks,
 )
 from ...animation.model.clip.binding import track_property_path
-from ...animation.services.jali.aligner import bundled_aligner_model
 from ...animation.services.jali.pipeline import JALIAnimationPipeline
 from ...assetio.resolver import resolve_existing_path
 from ...blender.action_metadata import action_is_additive
@@ -95,10 +94,7 @@ def generate_lipsync(context, request: JALIGenerationRequest) -> OperationResult
     status = dependency_status()
     if not status.parselmouth:
         return OperationResult(
-            False,
-            f"parselmouth didn't load: {status.parselmouth_error}",
-            "ERROR",
-            error=status.parselmouth_error,
+            False, f"parselmouth didn't load: {status.parselmouth_error}", "ERROR"
         )
     audio_path = resolve_existing_path(bpy.path.abspath(request.audio_path), warn=False)
     if not audio_path:
@@ -114,9 +110,7 @@ def generate_lipsync(context, request: JALIGenerationRequest) -> OperationResult
     warnings = []
     try:
         if request.use_transcript and request.transcript.strip() and status.g2p:
-            aligner = TranscriptAligner(
-                audio_path, request.transcript, model=bundled_aligner_model()
-            )
+            aligner = TranscriptAligner(audio_path, request.transcript)
             events = aligner.align_phonemes()
             if aligner.method_used == "legacy":
                 warnings.append(

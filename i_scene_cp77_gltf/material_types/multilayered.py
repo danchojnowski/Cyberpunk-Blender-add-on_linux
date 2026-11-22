@@ -24,11 +24,6 @@ from ..blender.transactions import new_tracked_datablock, track_created_databloc
 from ..core.log import debug_exception, get_logger
 from ..materials.blender.helper_caches import register_helper_cache
 from ..materials.blender.images import imageFromPath, imageFromRelPath
-from ..materials.blender.layout import (
-    add_bundle_items,
-    combine_bundle_node,
-    separate_bundle_node,
-)
 from ..materials.blender.multilayer import (
     clear_override_palette_cache,
     override_palette_stats,
@@ -36,6 +31,7 @@ from ..materials.blender.multilayer import (
     sync_hidden_layer_links,
 )
 from ..materials.blender.nodes import (
+    CreateCalculateVecNormalZ,
     configure_tangent_normal_map,
     create_node,
     createOverrideTable,
@@ -43,8 +39,8 @@ from ..materials.blender.nodes import (
 )
 from ..materials.blender.profiling import begin_material_phase, end_material_phase
 from ..materials.cache_identity import filtered_material_data_identity
-from ..materials.params import coerce_texture_path
 from ..materials.resources import load_material_document
+from .graph import add_bundle_items, combine_bundle_node, separate_bundle_node
 from .mat_common import (
     MaterialTypeBase,
     find_input,
@@ -52,7 +48,6 @@ from .mat_common import (
     param_texture_path,
     param_vector,
 )
-from .normal_math import vector_normal_z_node
 
 _LOG = get_logger(__name__)
 
@@ -1399,7 +1394,7 @@ def ml_surface_node_group():
     normal_add = shader_nodes.vector_math(
         surface.nodes, surface.links, "ADD", location=(-700, 0), hide=True
     ).node
-    normal_rebuild = vector_normal_z_node(surface, (-500, 0))
+    normal_rebuild = CreateCalculateVecNormalZ(surface, -500, 0)
     normal_map = configure_tangent_normal_map(
         create_node(surface.nodes, "ShaderNodeNormalMap", (-500, -300))
     )
@@ -1509,27 +1504,27 @@ class Multilayered(MaterialTypeBase):
                 return existing
 
         CT = imageFromRelPath(
-            coerce_texture_path(matTemplateObj.get("colorTexture")),
+            matTemplateObj["colorTexture"]["DepotPath"]["$value"],
             self.image_format,
             DepotPath=self.BasePath,
             ProjPath=self.ProjPath,
         )
         NT = imageFromRelPath(
-            coerce_texture_path(matTemplateObj.get("normalTexture")),
+            matTemplateObj["normalTexture"]["DepotPath"]["$value"],
             self.image_format,
             isNormal=True,
             DepotPath=self.BasePath,
             ProjPath=self.ProjPath,
         )
         RT = imageFromRelPath(
-            coerce_texture_path(matTemplateObj.get("roughnessTexture")),
+            matTemplateObj["roughnessTexture"]["DepotPath"]["$value"],
             self.image_format,
             isNormal=True,
             DepotPath=self.BasePath,
             ProjPath=self.ProjPath,
         )
         MT = imageFromRelPath(
-            coerce_texture_path(matTemplateObj.get("metalnessTexture")),
+            matTemplateObj["metalnessTexture"]["DepotPath"]["$value"],
             self.image_format,
             isNormal=True,
             DepotPath=self.BasePath,
@@ -1537,6 +1532,7 @@ class Multilayered(MaterialTypeBase):
         )
 
         TileMult = float(matTemplateObj.get("tilingMultiplier", 1))
+        colorMaskIn = matTemplateObj["colorMaskLevelsIn"]["Elements"]
         colorMaskOut = matTemplateObj["colorMaskLevelsOut"]["Elements"]
 
         cloned = _clone_template_group(
@@ -2538,7 +2534,7 @@ class Multilayered(MaterialTypeBase):
         CurMat = Mat.node_tree
         node_lookup = {n.name: n for n in CurMat.nodes}
 
-        orig_pbsdf = shader_nodes.principled_bsdf(CurMat.nodes)
+        orig_pbsdf = node_lookup.get("Principled BSDF")
 
         ml_surface = ml_surface_node_group()
         ml_surface.color_tag = "SHADER"
@@ -2581,7 +2577,7 @@ class Multilayered(MaterialTypeBase):
         if normal is not None:
             CurMat.links.new(surface_channels.outputs["Normal"], normal)
 
-        material_output = shader_nodes.material_output(CurMat.nodes)
+        material_output = node_lookup.get("Material Output")
         if material_output is None:
             material_output = create_node(
                 CurMat.nodes, "ShaderNodeOutputMaterial", (600, 120)

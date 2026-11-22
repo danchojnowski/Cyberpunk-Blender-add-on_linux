@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
+
 import bpy
 from bpy.props import EnumProperty, FloatProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
-from ..assetio.values import json_object
 from ..blender.operator_results import execute_operation
 from ..core.log import get_logger
 from ..core.notifications import import_operation, report
@@ -139,9 +140,9 @@ class CP77_OT_InkPlaySequence(bpy.types.Operator):
         scene = context.scene
         try:
             duration = float(
-                json_object(root.get("cp77_ink_animation_durations")).get(
-                    self.sequence_name, 0
-                )
+                json.loads(
+                    str(root.get("cp77_ink_animation_durations", "{}") or "{}")
+                ).get(self.sequence_name, 0)
             )
         except (TypeError, ValueError):
             duration = 0.0

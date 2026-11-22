@@ -1,19 +1,25 @@
 from functools import partial
 
 import bpy
+from bpy.app.translations import pgettext
 
 from ..blender import shader_nodes
 from ..blender.transactions import new_tracked_datablock
-from ..materials.blender.layout import combine_bundle_node, separate_bundle_node
 from ..materials.blender.nodes import (
     CreateShaderNodeValue,
     bsdf_socket_names,
     create_node,
+    createHash12Group,
     createLerpGroup,
     createVecLerpGroup,
 )
 from ..materials.cache_identity import filtered_material_data_identity
-from .graph import cp77_bitangent_socket, cp77_uv_tangent_node
+from .graph import (
+    combine_bundle_node,
+    cp77_bitangent_socket,
+    cp77_uv_tangent_node,
+    separate_bundle_node,
+)
 from .mat_common import (
     MaterialTypeBase,
     add_group_node,
@@ -31,7 +37,6 @@ from .parallax_common import (
     retarget_mip_sampler,
 )
 from .scalar_params import component_value, scalar_parameter_data, scalar_value
-from .shader_hash import screen_hash12_group
 
 _LAYER_MIP_LEVELS = {2: 2, 3: 3}
 _LAYER_MIP_TAPS = 9
@@ -537,7 +542,7 @@ class ParallaxScreen(MaterialTypeBase):
 
     def create(self, Data, Mat):
         CurMat = Mat.node_tree
-        pBSDF = shader_nodes.principled_bsdf(CurMat.nodes)
+        pBSDF = CurMat.nodes[pgettext("Principled BSDF")]
         sockets = bsdf_socket_names()
         pBSDF.inputs[sockets["Specular"]].default_value = 0
         values = self._values(Data)
@@ -824,7 +829,7 @@ class ParallaxScreen(MaterialTypeBase):
             brokenUVGroupO = create_node(
                 brokenUVGroup.nodes, "NodeGroupOutput", (200, 0)
             )
-            hash12G = screen_hash12_group()
+            hash12G = createHash12Group()
             hash12 = create_node(
                 brokenUVGroup.nodes, "ShaderNodeGroup", (-650, -50), label="hash12"
             )
@@ -1066,7 +1071,7 @@ class ParallaxScreen(MaterialTypeBase):
             shader_nodes.socket_by_identifier(
                 vecSub.inputs, "Vector_001"
             ).default_value = (0.1625, 0.1625, 0.1625)
-            hash12G = screen_hash12_group()
+            hash12G = createHash12Group()
             hash12_2 = create_node(
                 rndColorIGroup.nodes, "ShaderNodeGroup", (-50, -25), label="hash12"
             )
@@ -1351,7 +1356,7 @@ class ParallaxScreen(MaterialTypeBase):
             rndColorIndex.outputs["rndColorIndex"], rndColor.inputs["rndColorIndex"]
         )
 
-        hash12G = screen_hash12_group()
+        hash12G = createHash12Group()
         hash12 = create_node(
             CurMat.nodes, "ShaderNodeGroup", (-1550, -550), label="hash12"
         )

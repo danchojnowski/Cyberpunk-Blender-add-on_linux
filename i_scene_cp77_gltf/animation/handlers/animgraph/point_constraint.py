@@ -7,10 +7,9 @@ from .base import PoseOpHandler, resolve_bones, resolve_tracks
 
 class PointConstraintHandler(PoseOpHandler):
     node_types = ("animAnimNode_PointConstraint",)
-    bone_fields = ("transformIndex",)
 
     def map_data(self, context, program_node, node_type, data):
-        data = super().map_data(context, program_node, node_type, data)
+        resolve_bones(context, data, ("transformIndex",))
         entries = []
         for raw in data.get("inputWeightedTransforms", ()):
             item = dict(raw)
